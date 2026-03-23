@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 
 /* ─── AI ─── */
-const askClaude = async (system, messages) => {
-  const body = { model: "claude-haiku-4-5-20251001", max_tokens: 1000, messages };
+const askClaude = async (system, messages, maxTokens = 1500) => {
+  const body = { model: "claude-haiku-4-5-20251001", max_tokens: maxTokens, messages };
   if (system) body.system = system;
   const res = await fetch("/api/claude", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -12,50 +12,83 @@ const askClaude = async (system, messages) => {
   return data.content?.map(c => c.text || "").join("") || "Réponse vide.";
 };
 
-/* ─── SUPABASE ─── */
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const askClaudeWithPDFs = async (pdfs, prompt) => {
+  const content = [
+    ...pdfs.map(p => ({ type: "document", source: { type: "base64", media_type: "application/pdf", data: p } })),
+    { type: "text", text: prompt }
+  ];
+  const res = await fetch("/api/claude", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 2000, messages: [{ role: "user", content }] }),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.content?.map(c => c.text || "").join("") || "";
+};
 
+/* ─── SUPABASE ─── */
 const sb = async (path, options = {}) => {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": options.prefer || "return=representation" },
-    method: options.method || "GET",
-    body: options.body ? JSON.stringify(options.body) : undefined
+  const res = await fetch("/api/claude", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ service: "supabase", path, method: options.method || "GET", body: options.body, prefer: options.prefer || "return=representation" }),
   });
   if (!res.ok) throw new Error(`DB ${res.status}: ${await res.text()}`);
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  const data = await res.json();
+  if (data?.error) throw new Error(data.error);
+  return data;
 };
 
 const db = {
   getClub: id => sb(`clubs?id=eq.${id}`).then(r => r?.[0] || null),
   createClub: c => sb(`clubs`, { method: "POST", body: c }),
   updateClub: (id, d) => sb(`clubs?id=eq.${id}`, { method: "PATCH", body: d }),
-  getPlayers: cid => sb(`players?club_id=eq.${cid}&order=created_at.asc`),
-  createPlayer: p => sb(`players`, { method: "POST", body: p }),
-  updatePlayer: (id, d) => sb(`players?id=eq.${id}`, { method: "PATCH", body: d }),
-  deletePlayer: id => sb(`players?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
-  getMatches: cid => sb(`matches?club_id=eq.${cid}&order=created_at.desc`),
+  getSaisons: cid => sb(`saisons?club_id=eq.${cid}&order=created_at.desc`),
+  createSaison: s => sb(`saisons`, { method: "POST", body: s }),
+  updateSaison: (id, d) => sb(`saisons?id=eq.${id}`, { method: "PATCH", body: d }),
+  getJoueuses: cid => sb(`joueuses?club_id=eq.${cid}&order=nom.asc`),
+  createJoueuse: j => sb(`joueuses`, { method: "POST", body: j }),
+  updateJoueuse: (id, d) => sb(`joueuses?id=eq.${id}`, { method: "PATCH", body: d }),
+  deleteJoueuse: id => sb(`joueuses?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
+  getEvals: sid => sb(`evaluations?saison_id=eq.${sid}`),
+  getEvalJoueuse: (jid, sid) => sb(`evaluations?joueuse_id=eq.${jid}&saison_id=eq.${sid}`).then(r => r?.[0] || null),
+  createEval: e => sb(`evaluations`, { method: "POST", body: e }),
+  updateEval: (id, d) => sb(`evaluations?id=eq.${id}`, { method: "PATCH", body: d }),
+  getMatches: sid => sb(`matches?saison_id=eq.${sid}&order=created_at.desc`),
+  getAllMatches: cid => sb(`matches?club_id=eq.${cid}&order=created_at.desc`),
   createMatch: m => sb(`matches`, { method: "POST", body: m }),
-  getChat: cid => sb(`chat_history?club_id=eq.${cid}&order=created_at.asc`),
+  updateMatch: (id, d) => sb(`matches?id=eq.${id}`, { method: "PATCH", body: d }),
+  getCalendrier: sid => sb(`calendrier?saison_id=eq.${sid}&order=date.asc`),
+  createEvent: e => sb(`calendrier`, { method: "POST", body: e }),
+  deleteEvent: id => sb(`calendrier?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
+  getChat: sid => sb(`chat_history?saison_id=eq.${sid}&order=created_at.asc`),
+  getAllChat: cid => sb(`chat_history?club_id=eq.${cid}&order=created_at.asc`),
   addChat: m => sb(`chat_history`, { method: "POST", body: m, prefer: "return=minimal" }),
-  clearChat: cid => sb(`chat_history?club_id=eq.${cid}`, { method: "DELETE", prefer: "return=minimal" }),
+  clearChat: sid => sb(`chat_history?saison_id=eq.${sid}`, { method: "DELETE", prefer: "return=minimal" }),
 };
 
 const getSession = () => { try { const s = localStorage.getItem("cc_sess"); return s ? JSON.parse(s) : null; } catch { return null; } };
 const saveSession = s => { try { localStorage.setItem("cc_sess", s ? JSON.stringify(s) : ""); } catch {} };
 const uid = () => Math.random().toString(36).slice(2, 9);
+const hashPassword = async (pwd) => {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pwd + "coachclub_salt_2024"));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
+};
+const toBase64 = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(file); });
+
+const POSITIONS = ["Meneuse","Arrière","Ailière","Ailière-forte","Pivot"];
+const SKILLS = ["Tir","Dribble","Passe","Défense","Physique","Mental"];
+const SKILL_DB = ["tir","dribble","passe","defense","physique","mental"];
 
 /* ─── STYLES ─── */
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-:root{--bg:#111214;--surface:#1a1c20;--surface2:#21242a;--border:#2e3038;--accent:#e8f040;--accent-dim:#e8f04022;--accent-glow:#e8f04011;--white:#eef0f5;--muted:#686b7a;--red:#ff4d4d;--green:#4dff9a;--court:#c8a96e;--sparring:#a78bfa;--sparring-dim:#a78bfa18;}
+:root{--bg:#111214;--surface:#1a1c20;--surface2:#21242a;--border:#2e3038;--accent:#e8f040;--accent-dim:#e8f04022;--accent-glow:#e8f04011;--white:#eef0f5;--muted:#686b7a;--red:#ff4d4d;--green:#4dff9a;--court:#c8a96e;--sparring:#a78bfa;--sparring-dim:#a78bfa18;--blue:#40b4e8;--blue-dim:#40b4e822;}
 body{background:var(--bg);color:var(--white);font-family:'DM Sans',sans-serif;min-height:100vh;overflow-x:hidden;}
 .court-bg{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.03;background-image:repeating-linear-gradient(0deg,transparent,transparent 59px,var(--court) 59px,var(--court) 60px),repeating-linear-gradient(90deg,transparent,transparent 59px,var(--court) 59px,var(--court) 60px);}
 .app{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;}
 .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
-.auth-box{width:100%;max-width:440px;background:var(--surface);border:1px solid var(--border);border-radius:2px;overflow:hidden;}
+.auth-box{width:100%;max-width:480px;background:var(--surface);border:1px solid var(--border);border-radius:2px;overflow:hidden;}
 .auth-top{background:var(--accent);padding:28px 32px 24px;}
 .auth-logo{font-family:'Oswald',sans-serif;font-weight:700;font-size:28px;letter-spacing:3px;text-transform:uppercase;color:#111;line-height:1;}
 .auth-sub{font-size:12px;color:#333;margin-top:4px;letter-spacing:1px;text-transform:uppercase;}
@@ -67,21 +100,23 @@ body{background:var(--bg);color:var(--white);font-family:'DM Sans',sans-serif;mi
 .logo{font-family:'Oswald',sans-serif;font-weight:700;font-size:20px;letter-spacing:2px;text-transform:uppercase;}
 .logo em{color:var(--accent);font-style:normal;}
 .header-right{display:flex;align-items:center;gap:10px;}
-.club-badge{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:1px;text-transform:uppercase;background:var(--accent-dim);color:var(--accent);padding:3px 8px;border-radius:2px;border:1px solid var(--accent);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.club-badge{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:1px;text-transform:uppercase;background:var(--accent-dim);color:var(--accent);padding:3px 8px;border-radius:2px;border:1px solid var(--accent);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.saison-badge{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:1px;text-transform:uppercase;background:var(--blue-dim);color:var(--blue);padding:3px 8px;border-radius:2px;border:1px solid var(--blue);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
 .main{display:flex;flex:1;}
 .sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:20px 0;flex-shrink:0;position:sticky;top:52px;height:calc(100vh - 52px);overflow-y:auto;}
-.nav-group{margin-bottom:28px;}
+.nav-group{margin-bottom:24px;}
 .nav-label{font-family:'Oswald',sans-serif;font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);padding:0 18px;margin-bottom:6px;}
 .nav-item{display:flex;align-items:center;gap:10px;padding:9px 18px;cursor:pointer;transition:all .12s;color:var(--muted);font-size:14px;border-left:2px solid transparent;}
 .nav-item:hover{color:var(--white);background:var(--surface2);}
 .nav-item.active{color:var(--accent);border-left-color:var(--accent);background:var(--accent-glow);font-weight:500;}
 .ni{width:18px;text-align:center;font-size:15px;}
-.content{flex:1;padding:24px;overflow-y:auto;max-width:1100px;}
+.content{flex:1;padding:24px;overflow-y:auto;max-width:1200px;}
 .page-title{font-family:'Oswald',sans-serif;font-weight:700;font-size:26px;letter-spacing:2px;text-transform:uppercase;margin-bottom:24px;}
 .page-title span{color:var(--accent);}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:2px;padding:20px;margin-bottom:16px;}
 .card-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent);margin-bottom:16px;display:flex;align-items:center;gap:8px;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
 .field{margin-bottom:14px;}
 .field label{display:block;font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
 .field input,.field textarea,.field select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:2px;color:var(--white);font-family:'DM Sans',sans-serif;font-size:14px;padding:9px 12px;outline:none;transition:border-color .15s;}
@@ -97,18 +132,18 @@ body{background:var(--bg);color:var(--white);font-family:'DM Sans',sans-serif;mi
 .btn-danger{background:transparent;color:var(--red);border:1px solid #ff4d4d33;font-size:11px;padding:5px 12px;}
 .btn-danger:hover{background:#ff4d4d18;}
 .btn-sparring{background:var(--sparring-dim);color:var(--sparring);border:1px solid var(--sparring);}
-.player-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;}
+.player-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;}
 .pcard{background:var(--surface2);border:1px solid var(--border);border-radius:2px;padding:14px;transition:border-color .15s;cursor:pointer;}
 .pcard:hover{border-color:var(--accent);}
 .pnum{font-family:'Oswald',sans-serif;font-weight:700;font-size:36px;color:var(--court);line-height:1;margin-bottom:2px;}
-.pname{font-weight:500;font-size:14px;}
+.pname{font-weight:600;font-size:15px;}
 .ppos{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;}
 .skill-row{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
 .skill-lbl{font-size:10px;color:var(--muted);width:52px;flex-shrink:0;}
 .skill-track{flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden;}
 .skill-fill{height:100%;background:var(--accent);}
 .skill-val{font-size:10px;color:var(--white);width:12px;}
-.mitem{display:flex;align-items:center;gap:14px;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:2px;margin-bottom:8px;transition:border-color .15s;}
+.mitem{display:flex;align-items:center;gap:14px;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:2px;margin-bottom:8px;transition:border-color .15s;cursor:pointer;}
 .mitem:hover{border-color:var(--accent);}
 .mdate{font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);width:72px;flex-shrink:0;}
 .mvs{flex:1;font-size:14px;font-weight:500;}
@@ -126,17 +161,21 @@ body{background:var(--bg);color:var(--white);font-family:'DM Sans',sans-serif;mi
 .b-yellow{background:var(--accent-dim);color:var(--accent);}
 .b-green{background:#4dff9a18;color:var(--green);}
 .b-red{background:#ff4d4d18;color:var(--red);}
-.dropzone{border:2px dashed var(--border);border-radius:2px;padding:28px;text-align:center;cursor:pointer;transition:all .15s;margin-bottom:16px;}
+.b-blue{background:var(--blue-dim);color:var(--blue);}
+.dropzone{border:2px dashed var(--border);border-radius:2px;padding:24px;text-align:center;cursor:pointer;transition:all .15s;margin-bottom:12px;}
 .dropzone:hover,.dropzone.drag{border-color:var(--accent);background:var(--accent-glow);}
-.dropzone-icon{font-size:28px;margin-bottom:6px;}
-.dropzone-txt{font-size:13px;color:var(--muted);}
+.dropzone-icon{font-size:24px;margin-bottom:4px;}
+.dropzone-txt{font-size:12px;color:var(--muted);}
 .dropzone-txt strong{color:var(--white);}
 .overlay{position:fixed;inset:0;background:#000000d0;display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:2px;padding:24px;width:100%;max-width:560px;max-height:85vh;overflow-y:auto;}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:2px;padding:24px;width:100%;max-width:620px;max-height:90vh;overflow-y:auto;}
 .modal-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
 .modal-ttl{font-family:'Oswald',sans-serif;font-weight:600;font-size:16px;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent);}
 .close{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;}
 .close:hover{color:var(--white);}
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:20px;}
+.tab{font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;padding:8px 16px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;transition:all .15s;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
 .sparring-wrap{display:flex;flex-direction:column;flex:1;background:var(--bg);border:1px solid var(--sparring);border-radius:2px;overflow:hidden;}
 .sparring-header{background:var(--sparring-dim);border-bottom:1px solid var(--sparring);padding:14px 20px;display:flex;align-items:center;gap:12px;}
 .sparring-avatar{width:36px;height:36px;border-radius:50%;background:var(--sparring);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
@@ -169,199 +208,259 @@ body{background:var(--bg);color:var(--white);font-family:'DM Sans',sans-serif;mi
 .ai-loading{display:flex;align-items:center;gap:10px;color:var(--muted);font-family:'Lora',serif;font-style:italic;font-size:14px;min-height:80px;}
 .spinner{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:spin .8s linear infinite;flex-shrink:0;}
 @keyframes spin{to{transform:rotate(360deg)}}
+.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0;}
+.summary-block{background:var(--surface2);border:1px solid var(--border);border-radius:2px;padding:12px;}
+.summary-block-title{font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;}
+.summary-block.att .summary-block-title{color:var(--green);}
+.summary-block.att{border-color:#4dff9a33;}
+.summary-block.def .summary-block-title{color:var(--blue);}
+.summary-block.def{border-color:#40b4e833;}
+.summary-block.adv-att .summary-block-title{color:var(--red);}
+.summary-block.adv-att{border-color:#ff4d4d33;}
+.summary-block.adv-def .summary-block-title{color:var(--sparring);}
+.summary-block.adv-def{border-color:#a78bfa33;}
+.cal-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:2px;margin-bottom:8px;}
+.cal-item.next{border-color:var(--accent);background:var(--accent-glow);}
+.cal-date{font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);width:80px;flex-shrink:0;line-height:1.5;}
+.cal-info{flex:1;}
+.cal-title{font-size:14px;font-weight:500;}
+.cal-sub{font-size:11px;color:var(--muted);margin-top:2px;}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;background:var(--surface);border-top:1px solid var(--border);height:60px;padding-bottom:env(safe-area-inset-bottom);}
 .bottom-nav-inner{display:flex;height:60px;}
 .bnav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:var(--muted);transition:color .15s;border:none;background:none;padding:0;-webkit-tap-highlight-color:transparent;}
 .bnav-item.active{color:var(--accent);}
 .bnav-icon{font-size:20px;line-height:1;}
 .bnav-label{font-family:'Oswald',sans-serif;font-size:9px;letter-spacing:1px;text-transform:uppercase;}
-.flex{display:flex;}.gap2{gap:8px;}.items-c{align-items:center;}.jc-sb{justify-content:space-between;}.jc-end{justify-content:flex-end;}.mt2{margin-top:8px;}.mt3{margin-top:14px;}.mb2{margin-bottom:8px;}.muted{color:var(--muted);font-size:13px;}.divider{border:none;border-top:1px solid var(--border);margin:16px 0;}
+.flex{display:flex;}.gap2{gap:8px;}.gap3{gap:12px;}.items-c{align-items:center;}.jc-sb{justify-content:space-between;}.jc-end{justify-content:flex-end;}.mt2{margin-top:8px;}.mt3{margin-top:14px;}.mt4{margin-top:20px;}.mb2{margin-bottom:8px;}.mb3{margin-bottom:14px;}.muted{color:var(--muted);font-size:13px;}.divider{border:none;border-top:1px solid var(--border);margin:16px 0;}
 ::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-track{background:var(--bg);}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
 @media(max-width:640px){
   .sidebar{display:none;}
   .bottom-nav{display:block;}
   .content{padding:16px 14px 76px;}
   .header{height:48px;padding:0 14px;}
-  .grid2{grid-template-columns:1fr!important;}
+  .grid2,.summary-grid{grid-template-columns:1fr!important;}
+  .grid3{grid-template-columns:1fr 1fr!important;}
   .page-title{font-size:20px;margin-bottom:16px;}
   .card{padding:14px;}
   .stat-strip{gap:8px;}
   .player-grid{grid-template-columns:1fr 1fr;}
-  .modal{padding:18px;}
+  .modal{padding:18px;max-width:100%;}
   .field input,.field textarea,.field select{font-size:16px;}
   .sparring-wrap{height:calc(100vh - 48px - 60px);}
+  .saison-badge{display:none;}
 }
 `;
 
-/* ─── HELPERS ─── */
+/* ─── UI HELPERS ─── */
 function Stars({ v, onChange }) {
   return <div className="stars">{[1,2,3,4,5].map(i=>(
     <span key={i} className={`star ${i<=v?"on":""}`} onClick={()=>onChange&&onChange(i)}>★</span>
   ))}</div>;
 }
-
 function SkillBar({ label, value }) {
   return <div className="skill-row">
     <span className="skill-lbl">{label}</span>
-    <div className="skill-track"><div className="skill-fill" style={{width:`${value*20}%`}}/></div>
-    <span className="skill-val">{value}</span>
+    <div className="skill-track"><div className="skill-fill" style={{width:`${(value||0)*20}%`}}/></div>
+    <span className="skill-val">{value||0}</span>
   </div>;
 }
-
-const POSITIONS = ["Meneuse","Arrière","Ailière","Ailière-forte","Pivot"];
-const SKILLS    = ["Tir","Dribble","Passe","Défense","Physique","Mental"];
-const SKILL_DB  = ["tir","dribble","passe","defense","physique","mental"];
 
 /* ─── AUTH ─── */
 function AuthPage({ onAuth }) {
   const [tab, setTab] = useState("join");
-  const [clubName, setClubName] = useState("");
-  const [password, setPassword] = useState("");
-  const [coachName, setCoachName] = useState("");
-  const [contexte, setContexte] = useState("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [clubName, setClubName] = useState(""); const [password, setPassword] = useState(""); const [coachName, setCoachName] = useState("");
+  const [saisonNom, setSaisonNom] = useState("2025-2026"); const [equipe, setEquipe] = useState(""); const [division, setDivision] = useState(""); const [seances, setSeances] = useState("2"); const [contexte, setContexte] = useState("");
+  const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
 
   const handle = async () => {
     setErr(""); setLoading(true);
     if (!clubName.trim() || !password.trim() || !coachName.trim()) { setErr("Tous les champs sont requis."); setLoading(false); return; }
     const id = clubName.trim().toLowerCase().replace(/\s+/g,"_");
     try {
+      const hashed = await hashPassword(password);
       if (tab === "create") {
+        if (!equipe.trim()) { setErr("Nom équipe requis."); setLoading(false); return; }
         const existing = await db.getClub(id);
-        if (existing) { setErr("Un club avec ce nom existe déjà."); setLoading(false); return; }
-        await db.createClub({ id, name: clubName.trim(), password, coaches: [coachName.trim()], contexte: contexte.trim() });
+        if (existing) { setErr("Club déjà existant."); setLoading(false); return; }
+        await db.createClub({ id, name: clubName.trim(), password: hashed, coaches: [coachName.trim()], contexte: contexte.trim() });
+        const saisonId = uid();
+        await db.createSaison({ id: saisonId, club_id: id, nom: saisonNom, equipe: equipe.trim(), division: division.trim(), seances_par_semaine: parseInt(seances)||2, active: true });
+        const sess = { clubId: id, coachName: coachName.trim(), saisonId };
+        saveSession(sess); onAuth(sess);
       } else {
         const club = await db.getClub(id);
-        if (!club) { setErr("Club introuvable. Vérifie le nom."); setLoading(false); return; }
-        if (club.password !== password) { setErr("Mot de passe incorrect."); setLoading(false); return; }
-        if (!club.coaches.includes(coachName.trim())) {
-          await db.updateClub(id, { coaches: [...club.coaches, coachName.trim()] });
-        }
+        if (!club) { setErr("Club introuvable."); setLoading(false); return; }
+        if (club.password !== hashed) { setErr("Mot de passe incorrect."); setLoading(false); return; }
+        if (!club.coaches.includes(coachName.trim())) await db.updateClub(id, { coaches: [...club.coaches, coachName.trim()] });
+        const saisons = await db.getSaisons(id);
+        const active = saisons?.find(s=>s.active) || saisons?.[0];
+        if (!active) { setErr("Aucune saison trouvée."); setLoading(false); return; }
+        const sess = { clubId: id, coachName: coachName.trim(), saisonId: active.id };
+        saveSession(sess); onAuth(sess);
       }
-      const sess = { clubId: id, coachName: coachName.trim() };
-      saveSession(sess);
-      onAuth(sess);
     } catch(e) { setErr(`Erreur: ${e.message}`); }
     setLoading(false);
   };
 
-  return (
-    <div className="auth-wrap">
-      <div className="auth-box">
-        <div className="auth-top">
-          <div className="auth-logo">Coach<em>Club</em> 🏀</div>
-          <div className="auth-sub">Plateforme IA pour coachs basket</div>
-        </div>
-        <div className="auth-body">
-          <div className="auth-tabs">
-            <button className={`auth-tab ${tab==="join"?"active":""}`} onClick={()=>setTab("join")}>Rejoindre</button>
-            <button className={`auth-tab ${tab==="create"?"active":""}`} onClick={()=>setTab("create")}>Créer un club</button>
-          </div>
-          <div className="field"><label>Nom du club</label><input value={clubName} onChange={e=>setClubName(e.target.value)} placeholder="Ex: BC Villeneuve d'Ascq"/></div>
-          <div className="field"><label>Mot de passe du club</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Partagé entre coachs"/></div>
-          <div className="field"><label>Ton prénom</label><input value={coachName} onChange={e=>setCoachName(e.target.value)} placeholder="Ex: Laurent"/></div>
-          {tab==="create" && <div className="field">
-            <label>Contexte équipe</label>
-            <textarea value={contexte} onChange={e=>setContexte(e.target.value)} rows={3} placeholder="Ex: U15 filles, D6 Nord, 12 joueuses..."/>
-            <p style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Cortex s'en souviendra toute la saison.</p>
-          </div>}
-          {err && <p style={{color:"var(--red)",fontSize:13,marginBottom:12}}>{err}</p>}
-          <button className="btn btn-accent" style={{width:"100%"}} onClick={handle} disabled={loading}>
-            {loading?"...":tab==="create"?"Créer le club":"Rejoindre"}
-          </button>
-          <p className="muted mt2" style={{textAlign:"center",marginTop:12}}>
-            {tab==="join"?"Demande le nom et mot de passe au coach principal.":"Partage ces identifiants avec tes adjoints."}
-          </p>
-        </div>
+  return <div className="auth-wrap"><div className="auth-box">
+    <div className="auth-top"><div className="auth-logo">Coach<em>Club</em> 🏀</div><div className="auth-sub">Plateforme IA pour coachs basket</div></div>
+    <div className="auth-body">
+      <div className="auth-tabs">
+        <button className={`auth-tab ${tab==="join"?"active":""}`} onClick={()=>setTab("join")}>Rejoindre</button>
+        <button className={`auth-tab ${tab==="create"?"active":""}`} onClick={()=>setTab("create")}>Créer un club</button>
       </div>
+      <div className="field"><label>Nom du club</label><input value={clubName} onChange={e=>setClubName(e.target.value)} placeholder="Ex: BC Wasquehal"/></div>
+      <div className="field"><label>Mot de passe</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Partagé entre coachs"/></div>
+      <div className="field"><label>Ton prénom</label><input value={coachName} onChange={e=>setCoachName(e.target.value)} placeholder="Ex: Laurent"/></div>
+      {tab==="create" && <>
+        <hr className="divider"/>
+        <p style={{fontFamily:"Oswald",fontSize:10,letterSpacing:1,textTransform:"uppercase",color:"var(--muted)",marginBottom:12}}>Première saison</p>
+        <div className="grid2">
+          <div className="field"><label>Saison</label><input value={saisonNom} onChange={e=>setSaisonNom(e.target.value)} placeholder="2025-2026"/></div>
+          <div className="field"><label>Équipe</label><input value={equipe} onChange={e=>setEquipe(e.target.value)} placeholder="Ex: U15 Filles B"/></div>
+        </div>
+        <div className="grid2">
+          <div className="field"><label>Division</label><input value={division} onChange={e=>setDivision(e.target.value)} placeholder="Ex: D6 Nord"/></div>
+          <div className="field"><label>Séances/semaine</label>
+            <select value={seances} onChange={e=>setSeances(e.target.value)}>{["1","2","3","4","5"].map(n=><option key={n} value={n}>{n}</option>)}</select>
+          </div>
+        </div>
+        <div className="field"><label>Contexte équipe</label><textarea value={contexte} onChange={e=>setContexte(e.target.value)} rows={2} placeholder="U15 filles, niveau hétérogène, 2e année ensemble..."/></div>
+      </>}
+      {err && <p style={{color:"var(--red)",fontSize:13,marginBottom:12}}>{err}</p>}
+      <button className="btn btn-accent" style={{width:"100%"}} onClick={handle} disabled={loading}>{loading?"...":tab==="create"?"Créer le club":"Rejoindre"}</button>
     </div>
-  );
+  </div></div>;
 }
 
-/* ─── PLAYERS ─── */
-function PlayersPage({ club, players, reload }) {
-  const [showModal, setShowModal] = useState(false);
-  const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({});
+/* ─── SAISON MODAL ─── */
+function SaisonModal({ club, saisons, currentSaisonId, onSelect, onClose, onNewSaison }) {
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ nom:"2026-2027", equipe:"", division:"", seances_par_semaine:2 });
   const [saving, setSaving] = useState(false);
 
-  const blank = () => ({ numero:"", prenom:"", nom:"", poste:POSITIONS[0], notes:"", ...Object.fromEntries(SKILLS.map(k=>[k,3])) });
-  const openNew = () => { setEditId(null); setForm(blank()); setShowModal(true); };
-  const openEdit = p => {
-    const f = { ...p };
-    SKILLS.forEach((k,i) => { f[k] = p[SKILL_DB[i]] || 3; });
-    setEditId(p.id); setForm(f); setShowModal(true);
+  const create = async () => {
+    if (!form.equipe.trim()) return;
+    setSaving(true);
+    try {
+      await db.updateSaison(currentSaisonId, { active: false });
+      const id = uid();
+      await db.createSaison({ id, club_id: club.id, ...form, active: true });
+      await onNewSaison(id); onClose();
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  return <div className="overlay" onClick={onClose}>
+    <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:480}}>
+      <div className="modal-hdr"><span className="modal-ttl">Saisons</span><button className="close" onClick={onClose}>✕</button></div>
+      {!creating ? <>
+        {saisons.map(s=><div key={s.id} className={`cal-item ${s.id===currentSaisonId?"next":""}`} style={{cursor:"pointer"}} onClick={()=>{onSelect(s.id);onClose();}}>
+          <div style={{flex:1}}><div className="cal-title">{s.equipe} — {s.nom}</div><div className="cal-sub">{s.division} · {s.seances_par_semaine} séances/sem</div></div>
+          {s.active && <span className="badge b-green">Active</span>}
+        </div>)}
+        <button className="btn btn-accent" style={{width:"100%",marginTop:16}} onClick={()=>setCreating(true)}>+ Nouvelle saison</button>
+      </> : <>
+        <div className="grid2">
+          <div className="field"><label>Saison</label><input value={form.nom} onChange={e=>setForm(f=>({...f,nom:e.target.value}))}/></div>
+          <div className="field"><label>Équipe</label><input value={form.equipe} onChange={e=>setForm(f=>({...f,equipe:e.target.value}))} placeholder="Ex: U18 Filles"/></div>
+        </div>
+        <div className="grid2">
+          <div className="field"><label>Division</label><input value={form.division} onChange={e=>setForm(f=>({...f,division:e.target.value}))}/></div>
+          <div className="field"><label>Séances/sem</label><select value={form.seances_par_semaine} onChange={e=>setForm(f=>({...f,seances_par_semaine:parseInt(e.target.value)}))}>{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></div>
+        </div>
+        <div className="flex gap2 jc-end mt3">
+          <button className="btn btn-ghost" onClick={()=>setCreating(false)}>Annuler</button>
+          <button className="btn btn-accent" onClick={create} disabled={saving}>{saving?"...":"Créer"}</button>
+        </div>
+      </>}
+    </div>
+  </div>;
+}
+
+/* ─── JOUEUSES ─── */
+function JoueusesPage({ club, saison, joueuses, evals, reload }) {
+  const [showModal, setShowModal] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [tab, setTab] = useState("profil");
+  const [form, setForm] = useState({});
+  const [evalForm, setEvalForm] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const blankEval = () => ({ poste:POSITIONS[0], notes:"", ...Object.fromEntries(SKILLS.map(k=>[k,3])) });
+  const getEval = jid => evals.find(e => e.joueuse_id === jid);
+
+  const openNew = () => { setEditId(null); setForm({ numero:"", prenom:"", nom:"", date_naissance:"", notes_globales:"" }); setEvalForm(blankEval()); setTab("profil"); setShowModal(true); };
+  const openEdit = j => {
+    const ev = getEval(j.id);
+    const ef = ev ? { poste:ev.poste||POSITIONS[0], notes:ev.notes||"", ...Object.fromEntries(SKILLS.map((k,i)=>[k,ev[SKILL_DB[i]]||3])) } : blankEval();
+    setEditId(j.id); setForm({...j}); setEvalForm(ef); setTab("profil"); setShowModal(true);
   };
 
   const save = async () => {
     if (!form.nom) return;
     setSaving(true);
     try {
-      const payload = {
-        numero: form.numero||"", prenom: form.prenom||"", nom: form.nom,
-        poste: form.poste||POSITIONS[0], notes: form.notes||"",
-        tir: form.Tir||form.tir||3, dribble: form.Dribble||form.dribble||3,
-        passe: form.Passe||form.passe||3, defense: form["Défense"]||form.defense||3,
-        physique: form.Physique||form.physique||3, mental: form.Mental||form.mental||3
-      };
-      if (editId) await db.updatePlayer(editId, payload);
-      else await db.createPlayer({ id: uid(), club_id: club.id, ...payload });
+      let jid = editId;
+      if (editId) { await db.updateJoueuse(editId, { numero:form.numero||"", prenom:form.prenom||"", nom:form.nom, date_naissance:form.date_naissance||"", notes_globales:form.notes_globales||"" }); }
+      else { jid = uid(); await db.createJoueuse({ id:jid, club_id:club.id, numero:form.numero||"", prenom:form.prenom||"", nom:form.nom, date_naissance:form.date_naissance||"", notes_globales:form.notes_globales||"" }); }
+      const ep = { poste:evalForm.poste||POSITIONS[0], notes:evalForm.notes||"", tir:evalForm.Tir||evalForm.tir||3, dribble:evalForm.Dribble||evalForm.dribble||3, passe:evalForm.Passe||evalForm.passe||3, defense:evalForm["Défense"]||evalForm.defense||3, physique:evalForm.Physique||evalForm.physique||3, mental:evalForm.Mental||evalForm.mental||3 };
+      const ex = await db.getEvalJoueuse(jid, saison.id);
+      if (ex) { await db.updateEval(ex.id, ep); } else { await db.createEval({ id:uid(), joueuse_id:jid, saison_id:saison.id, ...ep }); }
       await reload(); setShowModal(false);
     } catch(e) { alert(`Erreur: ${e.message}`); }
     setSaving(false);
   };
 
-  const del = async id => { await db.deletePlayer(id); await reload(); };
+  const del = async id => { if (!confirm("Supprimer cette joueuse définitivement ?")) return; await db.deleteJoueuse(id); await reload(); };
 
   return <div>
     <div className="flex jc-sb items-c" style={{marginBottom:20}}>
-      <h2 className="page-title" style={{margin:0}}>Effectif <span>({players.length})</span></h2>
+      <h2 className="page-title" style={{margin:0}}>Effectif <span>({joueuses.length})</span></h2>
       <button className="btn btn-accent" onClick={openNew}>+ Joueuse</button>
     </div>
-    {players.length===0 && <div className="card" style={{textAlign:"center",padding:40}}>
-      <div style={{fontSize:48,marginBottom:12}}>🏀</div>
-      <p className="muted">Aucune joueuse. Commence par construire ton effectif.</p>
-    </div>}
+    {joueuses.length===0 && <div className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:12}}>🏀</div><p className="muted">Aucune joueuse. Commence par construire ton effectif.</p></div>}
     <div className="player-grid">
-      {players.map(p=>(
-        <div key={p.id} className="pcard" onClick={()=>openEdit(p)}>
-          <div className="pnum">#{p.numero||"?"}</div>
-          <div className="pname">{p.prenom} {p.nom}</div>
-          <div className="ppos">{p.poste}</div>
-          {SKILL_DB.map((k,i)=><SkillBar key={k} label={SKILLS[i]} value={p[k]||3}/>)}
-          {p.notes && <p style={{fontSize:11,color:"var(--muted)",marginTop:8,fontStyle:"italic",lineHeight:1.4}}>{p.notes}</p>}
-          <button className="btn btn-danger" style={{marginTop:10}} onClick={e=>{e.stopPropagation();del(p.id);}}>Supprimer</button>
-        </div>
-      ))}
+      {joueuses.map(j=>{
+        const ev = getEval(j.id);
+        return <div key={j.id} className="pcard" onClick={()=>openEdit(j)}>
+          <div className="pnum">#{j.numero||"?"}</div>
+          <div className="pname">{j.prenom} {j.nom}</div>
+          <div className="ppos">{ev?.poste||"–"}</div>
+          {ev ? SKILL_DB.map((k,i)=><SkillBar key={k} label={SKILLS[i]} value={ev[k]||3}/>) : <p className="muted" style={{fontSize:11,marginTop:8}}>Pas encore évalué cette saison</p>}
+          {j.notes_globales && <p style={{fontSize:11,color:"var(--muted)",marginTop:8,fontStyle:"italic",lineHeight:1.4}}>{j.notes_globales}</p>}
+          <button className="btn btn-danger" style={{marginTop:10}} onClick={e=>{e.stopPropagation();del(j.id);}}>Supprimer</button>
+        </div>;
+      })}
     </div>
     {showModal && <div className="overlay" onClick={()=>setShowModal(false)}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
-        <div className="modal-hdr">
-          <span className="modal-ttl">{editId?"Modifier":"Nouvelle joueuse"}</span>
-          <button className="close" onClick={()=>setShowModal(false)}>✕</button>
+        <div className="modal-hdr"><span className="modal-ttl">{editId?"Modifier":"Nouvelle joueuse"}</span><button className="close" onClick={()=>setShowModal(false)}>✕</button></div>
+        <div className="tabs">
+          <button className={`tab ${tab==="profil"?"active":""}`} onClick={()=>setTab("profil")}>👤 Profil permanent</button>
+          <button className={`tab ${tab==="eval"?"active":""}`} onClick={()=>setTab("eval")}>⭐ Éval {saison.nom}</button>
         </div>
-        <div className="grid2">
-          <div className="field"><label>Prénom</label><input value={form.prenom||""} onChange={e=>setForm(f=>({...f,prenom:e.target.value}))} placeholder="Prénom"/></div>
-          <div className="field"><label>Nom</label><input value={form.nom||""} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} placeholder="Nom"/></div>
-        </div>
-        <div className="grid2">
-          <div className="field"><label>N° maillot</label><input type="number" value={form.numero||""} onChange={e=>setForm(f=>({...f,numero:e.target.value}))} placeholder="7"/></div>
-          <div className="field"><label>Poste</label>
-            <select value={form.poste||POSITIONS[0]} onChange={e=>setForm(f=>({...f,poste:e.target.value}))}>
-              {POSITIONS.map(p=><option key={p}>{p}</option>)}
-            </select>
+        {tab==="profil" && <>
+          <div className="grid2">
+            <div className="field"><label>Prénom</label><input value={form.prenom||""} onChange={e=>setForm(f=>({...f,prenom:e.target.value}))} placeholder="Prénom"/></div>
+            <div className="field"><label>Nom</label><input value={form.nom||""} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} placeholder="Nom"/></div>
           </div>
-        </div>
-        <div className="field"><label>Notes</label><textarea value={form.notes||""} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Points forts, axes de progression..."/></div>
-        <hr className="divider"/>
-        <p className="muted mb2" style={{fontFamily:"Oswald",letterSpacing:1,textTransform:"uppercase",fontSize:10}}>Évaluation (1–5)</p>
-        {SKILLS.map(k=>(
-          <div key={k} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+          <div className="grid2">
+            <div className="field"><label>N° maillot</label><input value={form.numero||""} onChange={e=>setForm(f=>({...f,numero:e.target.value}))} placeholder="7"/></div>
+            <div className="field"><label>Date naissance</label><input type="date" value={form.date_naissance||""} onChange={e=>setForm(f=>({...f,date_naissance:e.target.value}))}/></div>
+          </div>
+          <div className="field"><label>Notes permanentes</label><textarea value={form.notes_globales||""} onChange={e=>setForm(f=>({...f,notes_globales:e.target.value}))} placeholder="Notes sur la joueuse qui traversent les saisons et les équipes..."/></div>
+        </>}
+        {tab==="eval" && <>
+          <div className="field"><label>Poste</label><select value={evalForm.poste||POSITIONS[0]} onChange={e=>setEvalForm(f=>({...f,poste:e.target.value}))}>{POSITIONS.map(p=><option key={p}>{p}</option>)}</select></div>
+          <hr className="divider"/>
+          <p style={{fontFamily:"Oswald",fontSize:10,letterSpacing:1,textTransform:"uppercase",color:"var(--muted)",marginBottom:12}}>Évaluation saison (1–5)</p>
+          {SKILLS.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
             <label style={{width:72,fontSize:10,fontFamily:"Oswald",letterSpacing:1,textTransform:"uppercase",color:"var(--muted)",flexShrink:0}}>{k}</label>
-            <Stars v={form[k]||3} onChange={v=>setForm(f=>({...f,[k]:v}))}/>
-          </div>
-        ))}
+            <Stars v={evalForm[k]||3} onChange={v=>setEvalForm(f=>({...f,[k]:v}))}/>
+          </div>)}
+          <div className="field" style={{marginTop:12}}><label>Notes saison {saison.nom}</label><textarea value={evalForm.notes||""} onChange={e=>setEvalForm(f=>({...f,notes:e.target.value}))} placeholder="Points forts, axes de progression cette saison..."/></div>
+        </>}
         <div className="flex gap2 jc-end mt3">
           <button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Annuler</button>
           <button className="btn btn-accent" onClick={save} disabled={saving}>{saving?"...":"Enregistrer"}</button>
@@ -371,49 +470,49 @@ function PlayersPage({ club, players, reload }) {
   </div>;
 }
 
-/* ─── MATCHES ─── */
-function MatchesPage({ club, matches, reload }) {
+/* ─── MATCHS ─── */
+function MatchsPage({ club, saison, matches, reload }) {
   const [showModal, setShowModal] = useState(false);
+  const [editMatch, setEditMatch] = useState(null);
   const [parsing, setParsing] = useState(false);
-  const [pdfMsg, setPdfMsg] = useState("");
+  const [pdfStatus, setPdfStatus] = useState({ feuille:"", score:"", tirs:"" });
+  const [pdfs, setPdfs] = useState({ feuille:null, score:null, tirs:null });
   const [saving, setSaving] = useState(false);
-  const fileRef = useRef();
-  const [form, setForm] = useState({ date:"", adversaire:"", scoreNous:"", scoreEux:"", defense_adverse:"", joueuses_cles:"", resume:"" });
+  const fileRefs = { feuille: useRef(), score: useRef(), tirs: useRef() };
+  const emptyForm = () => ({ date:"", adversaire:"", score_nous:"", score_eux:"", defense_adverse:"", joueuses_cles:"", mon_attaque:"", ma_defense:"", attaque_adverse:"", defense_adverse_notes:"" });
+  const [form, setForm] = useState(emptyForm());
 
-  const handlePdf = async file => {
-    if (!file || file.type!=="application/pdf") return;
-    setParsing(true); setPdfMsg("Analyse en cours...");
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const b64 = reader.result.split(",")[1];
-      try {
-        const res = await fetch("/api/claude", {
-          method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:500, messages:[{ role:"user", content:[
-            {type:"document", source:{type:"base64",media_type:"application/pdf",data:b64}},
-            {type:"text", text:'Extrais les infos de cette feuille de match basket. Réponds UNIQUEMENT en JSON:\n{"adversaire":"","score_nous":0,"score_eux":0,"joueuses":"stats clés en 1 ligne"}'}
-          ]}]})
-        });
-        const data = await res.json();
-        const txt = data.content?.map(c=>c.text||"").join("") || "";
-        const p = JSON.parse(txt.replace(/```json|```/g,"").trim());
-        setForm(f=>({...f, adversaire:p.adversaire||f.adversaire, scoreNous:String(p.score_nous||f.scoreNous), scoreEux:String(p.score_eux||f.scoreEux), joueuses_cles:p.joueuses||f.joueuses_cles}));
-        setPdfMsg("✅ Analysé");
-      } catch { setPdfMsg("PDF chargé — complète manuellement"); }
-      setParsing(false);
-    };
-    reader.readAsDataURL(file);
+  const openNew = () => { setEditMatch(null); setPdfs({ feuille:null, score:null, tirs:null }); setPdfStatus({ feuille:"", score:"", tirs:"" }); setForm(emptyForm()); setShowModal(true); };
+  const openEdit = m => { setEditMatch(m); setForm({ date:m.date||"", adversaire:m.adversaire||"", score_nous:m.score_nous||"", score_eux:m.score_eux||"", defense_adverse:m.defense_adverse||"", joueuses_cles:m.joueuses_cles||"", mon_attaque:m.mon_attaque||"", ma_defense:m.ma_defense||"", attaque_adverse:m.attaque_adverse||"", defense_adverse_notes:m.defense_adverse_notes||"" }); setPdfs({ feuille:null, score:null, tirs:null }); setPdfStatus({ feuille:"", score:"", tirs:"" }); setShowModal(true); };
+
+  const handlePdf = async (type, file) => {
+    if (!file || file.type !== "application/pdf") return;
+    setPdfStatus(s=>({...s,[type]:"Chargement..."}));
+    try { const b64 = await toBase64(file); setPdfs(p=>({...p,[type]:b64})); setPdfStatus(s=>({...s,[type]:"✅"})); }
+    catch { setPdfStatus(s=>({...s,[type]:"Erreur"})); }
+  };
+
+  const analyze = async () => {
+    const available = Object.entries(pdfs).filter(([,v])=>v);
+    if (!available.length) return;
+    setParsing(true);
+    try {
+      const b64s = available.map(([,v])=>v);
+      const labels = available.map(([k])=>k==="feuille"?"feuille de match officielle FFBB":k==="score"?"fiche de score avec statistiques par joueuse":"document de positions de tirs réussis").join(", ");
+      const txt = await askClaudeWithPDFs(b64s, `Tu as ${b64s.length} document(s) d'un match basket U15 féminin : ${labels}. Analyse et réponds UNIQUEMENT en JSON:\n{"adversaire":"","score_nous":0,"score_eux":0,"date":"","defense_type":"","joueuses_stats":[{"nom":"","pts":0,"tirs":0}],"mon_attaque":"analyse offensive de notre équipe","ma_defense":"analyse défensive de notre équipe","attaque_adverse":"comment l'adversaire a attaqué","defense_adverse":"quel type de défense l'adversaire a joué et comment on y a répondu"}`);
+      const p = JSON.parse(txt.replace(/```json|```/g,"").trim());
+      setForm(f=>({ ...f, adversaire:p.adversaire||f.adversaire, score_nous:String(p.score_nous||f.score_nous), score_eux:String(p.score_eux||f.score_eux), date:p.date||f.date, defense_adverse:p.defense_type||f.defense_adverse, joueuses_cles:p.joueuses_stats?.map(j=>`${j.nom}: ${j.pts}pts`).join(", ")||f.joueuses_cles, mon_attaque:p.mon_attaque||f.mon_attaque, ma_defense:p.ma_defense||f.ma_defense, attaque_adverse:p.attaque_adverse||f.attaque_adverse, defense_adverse_notes:p.defense_adverse||f.defense_adverse_notes }));
+    } catch(e) { alert(`Erreur: ${e.message}`); }
+    setParsing(false);
   };
 
   const save = async () => {
     if (!form.adversaire) return;
     setSaving(true);
     try {
-      await db.createMatch({ id:uid(), club_id:club.id, date:form.date, adversaire:form.adversaire, score_nous:form.scoreNous, score_eux:form.scoreEux, defense_adverse:form.defense_adverse, joueuses_cles:form.joueuses_cles, resume:form.resume });
-      await reload();
-      setShowModal(false);
-      setForm({ date:"", adversaire:"", scoreNous:"", scoreEux:"", defense_adverse:"", joueuses_cles:"", resume:"" });
-      setPdfMsg("");
+      const payload = { club_id:club.id, saison_id:saison.id, date:form.date, adversaire:form.adversaire, score_nous:form.score_nous, score_eux:form.score_eux, defense_adverse:form.defense_adverse, joueuses_cles:form.joueuses_cles, mon_attaque:form.mon_attaque, ma_defense:form.ma_defense, attaque_adverse:form.attaque_adverse, defense_adverse_notes:form.defense_adverse_notes };
+      if (editMatch) { await db.updateMatch(editMatch.id, payload); } else { await db.createMatch({ id:uid(), ...payload }); }
+      await reload(); setShowModal(false);
     } catch(e) { alert(`Erreur: ${e.message}`); }
     setSaving(false);
   };
@@ -423,26 +522,23 @@ function MatchesPage({ club, matches, reload }) {
   return <div>
     <div className="flex jc-sb items-c" style={{marginBottom:20}}>
       <h2 className="page-title" style={{margin:0}}>Matchs <span>({matches.length})</span></h2>
-      <button className="btn btn-accent" onClick={()=>setShowModal(true)}>+ Match</button>
+      <button className="btn btn-accent" onClick={openNew}>+ Match</button>
     </div>
     {matches.length>0 && <div className="stat-strip">
       <div className="sbox"><div className="sval">{matches.length}</div><div className="slbl">Joués</div></div>
       <div className="sbox"><div className="sval" style={{color:"var(--green)"}}>{wins}</div><div className="slbl">Victoires</div></div>
       <div className="sbox"><div className="sval" style={{color:"var(--red)"}}>{matches.length-wins}</div><div className="slbl">Défaites</div></div>
-      <div className="sbox"><div className="sval">{matches.length?Math.round(wins/matches.length*100):0}%</div><div className="slbl">% Victoire</div></div>
+      <div className="sbox"><div className="sval">{matches.length?Math.round(wins/matches.length*100):0}%</div><div className="slbl">%V</div></div>
     </div>}
-    {matches.length===0 && <div className="card" style={{textAlign:"center",padding:40}}>
-      <div style={{fontSize:48,marginBottom:12}}>📋</div>
-      <p className="muted">Aucun match. Charge ta première feuille !</p>
-    </div>}
+    {matches.length===0 && <div className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:12}}>📋</div><p className="muted">Aucun match cette saison.</p></div>}
     {matches.map(m=>{
-      const w = parseInt(m.score_nous)>parseInt(m.score_eux);
-      return <div key={m.id} className="mitem">
+      const w=parseInt(m.score_nous)>parseInt(m.score_eux);
+      return <div key={m.id} className="mitem" onClick={()=>openEdit(m)}>
         <span className="mdate">{m.date||"–"}</span>
         <div style={{flex:1}}>
           <div className="mvs">vs {m.adversaire}</div>
           {m.defense_adverse && <span className="badge b-yellow" style={{display:"inline-block",marginTop:3}}>{m.defense_adverse}</span>}
-          {m.resume && <p style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{m.resume.slice(0,90)}{m.resume.length>90?"…":""}</p>}
+          {m.mon_attaque && <p style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{m.mon_attaque.slice(0,80)}{m.mon_attaque.length>80?"…":""}</p>}
         </div>
         <div className={`mscore ${w?"w":"l"}`}>{m.score_nous}–{m.score_eux}</div>
         <span className={`badge ${w?"b-green":"b-red"}`}>{w?"V":"D"}</span>
@@ -450,23 +546,40 @@ function MatchesPage({ club, matches, reload }) {
     })}
     {showModal && <div className="overlay" onClick={()=>setShowModal(false)}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
-        <div className="modal-hdr"><span className="modal-ttl">Nouveau match</span><button className="close" onClick={()=>setShowModal(false)}>✕</button></div>
-        <div className={`dropzone ${parsing?"drag":""}`} onClick={()=>fileRef.current?.click()} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();handlePdf(e.dataTransfer.files[0]);}}>
-          <input ref={fileRef} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>handlePdf(e.target.files[0])}/>
-          <div className="dropzone-icon">📄</div>
-          <div className="dropzone-txt">{parsing?"Analyse...":(pdfMsg||<><strong>Charge la feuille PDF</strong><br/>Glisse ou clique</>)}</div>
-        </div>
+        <div className="modal-hdr"><span className="modal-ttl">{editMatch?"Modifier":"Nouveau match"}</span><button className="close" onClick={()=>setShowModal(false)}>✕</button></div>
+        {!editMatch && <div style={{marginBottom:16}}>
+          <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>📄 Documents PDF FFBB (optionnel)</p>
+          <div className="grid3">
+            {[["feuille","📋","Feuille match"],["score","📊","Fiche score"],["tirs","🎯","Positions tirs"]].map(([type,icon,label])=>(
+              <div key={type}>
+                <div className={`dropzone ${pdfs[type]?"drag":""}`} style={{padding:14}} onClick={()=>fileRefs[type].current?.click()} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();handlePdf(type,e.dataTransfer.files[0]);}}>
+                  <input ref={fileRefs[type]} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>handlePdf(type,e.target.files[0])}/>
+                  <div className="dropzone-icon" style={{fontSize:18}}>{icon}</div>
+                  <div className="dropzone-txt" style={{fontSize:11}}>{pdfStatus[type]||<strong>{label}</strong>}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {Object.values(pdfs).some(v=>v) && <button className="btn btn-accent" style={{width:"100%",marginTop:4}} onClick={analyze} disabled={parsing}>{parsing?"⏳ Analyse...":"🧠 Analyser les PDFs"}</button>}
+        </div>}
         <div className="grid2">
           <div className="field"><label>Date</label><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></div>
           <div className="field"><label>Adversaire</label><input value={form.adversaire} onChange={e=>setForm(f=>({...f,adversaire:e.target.value}))} placeholder="Nom équipe"/></div>
         </div>
         <div className="grid2">
-          <div className="field"><label>Notre score</label><input type="number" value={form.scoreNous} onChange={e=>setForm(f=>({...f,scoreNous:e.target.value}))}/></div>
-          <div className="field"><label>Score adverse</label><input type="number" value={form.scoreEux} onChange={e=>setForm(f=>({...f,scoreEux:e.target.value}))}/></div>
+          <div className="field"><label>Notre score</label><input type="number" value={form.score_nous} onChange={e=>setForm(f=>({...f,score_nous:e.target.value}))}/></div>
+          <div className="field"><label>Score adverse</label><input type="number" value={form.score_eux} onChange={e=>setForm(f=>({...f,score_eux:e.target.value}))}/></div>
         </div>
-        <div className="field"><label>Défense adverse</label><input value={form.defense_adverse} onChange={e=>setForm(f=>({...f,defense_adverse:e.target.value}))} placeholder="Zone 2-3, H/H, Press..."/></div>
+        <div className="field"><label>Type défense adverse</label><input value={form.defense_adverse} onChange={e=>setForm(f=>({...f,defense_adverse:e.target.value}))} placeholder="Zone 2-3, H/H, Press..."/></div>
         <div className="field"><label>Joueuses clés adverses</label><input value={form.joueuses_cles} onChange={e=>setForm(f=>({...f,joueuses_cles:e.target.value}))} placeholder="#7 forte au tir..."/></div>
-        <div className="field"><label>Résumé</label><textarea value={form.resume} onChange={e=>setForm(f=>({...f,resume:e.target.value}))} rows={4} placeholder="Ce qui a marché, ce qui n'a pas marché..."/></div>
+        <hr className="divider"/>
+        <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:12}}>Résumé structuré</p>
+        <div className="summary-grid">
+          <div className="summary-block att"><div className="summary-block-title">⚡ Mon attaque</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:70,fontFamily:"DM Sans"}} value={form.mon_attaque} onChange={e=>setForm(f=>({...f,mon_attaque:e.target.value}))} placeholder="Ce qui a marché offensivement..."/></div>
+          <div className="summary-block def"><div className="summary-block-title">🛡️ Ma défense</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:70,fontFamily:"DM Sans"}} value={form.ma_defense} onChange={e=>setForm(f=>({...f,ma_defense:e.target.value}))} placeholder="Notre organisation défensive..."/></div>
+          <div className="summary-block adv-att"><div className="summary-block-title">⚔️ Attaque adverse</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:70,fontFamily:"DM Sans"}} value={form.attaque_adverse} onChange={e=>setForm(f=>({...f,attaque_adverse:e.target.value}))} placeholder="Comment ils ont attaqué..."/></div>
+          <div className="summary-block adv-def"><div className="summary-block-title">🔒 Défense adverse</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:70,fontFamily:"DM Sans"}} value={form.defense_adverse_notes} onChange={e=>setForm(f=>({...f,defense_adverse_notes:e.target.value}))} placeholder="Leur défense, comment on y a répondu..."/></div>
+        </div>
         <div className="flex gap2 jc-end mt3">
           <button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Annuler</button>
           <button className="btn btn-accent" onClick={save} disabled={saving}>{saving?"...":"Enregistrer"}</button>
@@ -476,22 +589,97 @@ function MatchesPage({ club, matches, reload }) {
   </div>;
 }
 
+/* ─── CALENDRIER ─── */
+function CalendrierPage({ club, saison, calendrier, matches, reload }) {
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm] = useState({ date:"", heure:"", adversaire:"", lieu:"Domicile", type:"match", notes:"" });
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!form.date) return;
+    setSaving(true);
+    try { await db.createEvent({ id:uid(), saison_id:saison.id, club_id:club.id, ...form }); await reload(); setShowModal(false); setForm({ date:"", heure:"", adversaire:"", lieu:"Domicile", type:"match", notes:"" }); }
+    catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+  const del = async id => { await db.deleteEvent(id); await reload(); };
+
+  const today = new Date().toISOString().split("T")[0];
+  const next = calendrier.find(e=>e.date>=today && e.type==="match");
+  const grouped = calendrier.reduce((acc,e)=>{ const m=e.date?.slice(0,7)||"–"; if(!acc[m]) acc[m]=[]; acc[m].push(e); return acc; }, {});
+
+  return <div>
+    <div className="flex jc-sb items-c" style={{marginBottom:20}}>
+      <h2 className="page-title" style={{margin:0}}>Calendrier</h2>
+      <button className="btn btn-accent" onClick={()=>setShowModal(true)}>+ Événement</button>
+    </div>
+    {next && <div className="card" style={{borderColor:"var(--accent)",background:"var(--accent-glow)",marginBottom:20,padding:14}}>
+      <p style={{fontSize:11,color:"var(--muted)",fontFamily:"Oswald",letterSpacing:1,textTransform:"uppercase"}}>🔜 Prochain match</p>
+      <p style={{fontSize:16,fontWeight:600,marginTop:4}}>vs {next.adversaire}</p>
+      <p style={{fontSize:13,color:"var(--muted)",marginTop:2}}>{next.date} {next.heure} · {next.lieu}</p>
+    </div>}
+    {calendrier.length===0 && <div className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:12}}>📅</div><p className="muted">Aucun événement. Ajoute les matchs de la saison !</p></div>}
+    {Object.entries(grouped).sort().map(([month,events])=>(
+      <div key={month} style={{marginBottom:20}}>
+        <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:2,textTransform:"uppercase",color:"var(--muted)",marginBottom:8}}>{month}</p>
+        {events.map(e=>{
+          const isNext = e.id===next?.id;
+          const linked = matches.find(m=>m.id===e.match_id);
+          return <div key={e.id} className={`cal-item ${isNext?"next":""}`}>
+            <div className="cal-date">{e.date}<br/><span style={{fontSize:10}}>{e.heure}</span></div>
+            <div className="cal-info">
+              <div className="cal-title">{e.type==="match"?`vs ${e.adversaire}`:e.notes||e.type}</div>
+              <div className="cal-sub">{e.lieu}{linked?` · ${linked.score_nous}-${linked.score_eux}`:""}</div>
+            </div>
+            <span className={`badge ${e.type==="match"?"b-yellow":e.type==="entrainement"?"b-blue":"b-green"}`}>{e.type==="match"?"Match":e.type==="entrainement"?"Entraîn.":"Tournoi"}</span>
+            {linked && <span className={`badge ${parseInt(linked.score_nous)>parseInt(linked.score_eux)?"b-green":"b-red"}`}>{parseInt(linked.score_nous)>parseInt(linked.score_eux)?"V":"D"}</span>}
+            <button className="btn btn-danger" style={{padding:"3px 8px",fontSize:10}} onClick={()=>del(e.id)}>✕</button>
+          </div>;
+        })}
+      </div>
+    ))}
+    {showModal && <div className="overlay" onClick={()=>setShowModal(false)}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-hdr"><span className="modal-ttl">Nouvel événement</span><button className="close" onClick={()=>setShowModal(false)}>✕</button></div>
+        <div className="field"><label>Type</label><select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}><option value="match">Match</option><option value="entrainement">Entraînement</option><option value="tournoi">Tournoi</option></select></div>
+        <div className="grid2">
+          <div className="field"><label>Date</label><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></div>
+          <div className="field"><label>Heure</label><input type="time" value={form.heure} onChange={e=>setForm(f=>({...f,heure:e.target.value}))}/></div>
+        </div>
+        {form.type==="match" && <>
+          <div className="field"><label>Adversaire</label><input value={form.adversaire} onChange={e=>setForm(f=>({...f,adversaire:e.target.value}))} placeholder="Nom équipe"/></div>
+          <div className="field"><label>Lieu</label><select value={form.lieu} onChange={e=>setForm(f=>({...f,lieu:e.target.value}))}><option>Domicile</option><option>Extérieur</option></select></div>
+        </>}
+        <div className="field"><label>Notes</label><input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Infos supplémentaires..."/></div>
+        <div className="flex gap2 jc-end mt3">
+          <button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Annuler</button>
+          <button className="btn btn-accent" onClick={save} disabled={saving}>{saving?"...":"Ajouter"}</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
 /* ─── GAME PLAN ─── */
-function GamePlanPage({ club, players, matches }) {
+function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier }) {
   const [adversaire, setAdversaire] = useState("");
   const [infos, setInfos] = useState("");
   const [mode, setMode] = useState("court");
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
+  const today = new Date().toISOString().split("T")[0];
+  const next = calendrier.find(e=>e.type==="match"&&e.date>=today);
+  useEffect(()=>{ if(next&&!adversaire) setAdversaire(next.adversaire); },[next]);
 
   const generate = async () => {
     if (!adversaire) return;
     setLoading(true); setOutput("");
-    const p = players.map(pl=>`${pl.prenom} ${pl.nom} (#${pl.numero}, ${pl.poste}) Tir:${pl.tir} Déf:${pl.defense} Phys:${pl.physique} Mental:${pl.mental}. ${pl.notes||""}`).join("\n");
-    const m = matches.slice(0,6).map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux} | Déf: ${ma.defense_adverse||"?"} | ${ma.resume||"–"}`).join("\n");
-    const fmt = mode==="court"?"Format COURT : 1 page max, bullet points opérationnels.":"Format DÉTAILLÉ : analyse tactique complète, justifie chaque choix.";
+    const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
+    const m = matches.slice(0,6).map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux}\nAtt: ${ma.mon_attaque?.slice(0,60)||"–"} | Déf: ${ma.ma_defense?.slice(0,60)||"–"}\nAdv: ${ma.attaque_adverse?.slice(0,60)||"–"}`).join("\n\n");
+    const prev = matches.find(ma=>ma.adversaire?.toLowerCase()===adversaire.toLowerCase());
+    const fmt = mode==="court"?"Format COURT: 1 page max, bullet points opérationnels.":"Format DÉTAILLÉ: analyse tactique complète, justifie chaque choix.";
     try {
-      const prompt = `Tu es un assistant coach basket expert.\n\nCONTEXTE: ${club.contexte||"Non renseigné"}\nEFFECTIF:\n${p||"Non renseigné"}\nHISTORIQUE:\n${m||"Aucun"}\nADVERSAIRE: ${adversaire}\nINFOS: ${infos||"Rien"}\n\nGénère un plan de match. ${fmt} Couvre: défense recommandée, système offensif, matchups clés, message équipe.`;
+      const prompt = `Tu es assistant coach basket expert.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""} | ${saison.seances_par_semaine} séances/semaine\nEFFECTIF:\n${p||"Non renseigné"}\nHISTORIQUE:\n${m||"Aucun"}\n${prev?`\nMATCH PRÉCÉDENT vs ${adversaire} (${prev.date}): ${prev.score_nous}-${prev.score_eux}\nNotre attaque: ${prev.mon_attaque||"–"}\nNotre défense: ${prev.ma_defense||"–"}\nLeur attaque: ${prev.attaque_adverse||"–"}\nLeur défense: ${prev.defense_adverse_notes||"–"}`:""}${next?`\nPROCHAIN MATCH: ${next.date} ${next.heure} vs ${adversaire}`:""}\n\nADVERSAIRE: ${adversaire}\nINFOS: ${infos||"Rien"}\n\nGénère un plan de match. ${fmt}\nCouvre: défense recommandée, système offensif, matchups clés, travail à faire sur les ${saison.seances_par_semaine} séances avant le match, message équipe.`;
       setOutput(await askClaude(null, [{role:"user",content:prompt}]));
     } catch(e) { setOutput(`Erreur: ${e.message}`); }
     setLoading(false);
@@ -499,60 +687,98 @@ function GamePlanPage({ club, players, matches }) {
 
   return <div>
     <h2 className="page-title">Plan de <span>match</span></h2>
+    {next && <div className="card" style={{borderColor:"var(--accent)",background:"var(--accent-glow)",marginBottom:16,padding:14}}>
+      <p style={{fontSize:11,color:"var(--muted)"}}>🔜 Prochain match détecté</p>
+      <p style={{fontSize:15,fontWeight:600,marginTop:4}}>vs {next.adversaire} — {next.date} {next.heure}</p>
+    </div>}
     <div className="grid2">
       <div className="card">
         <div className="card-title">⚙️ Paramètres</div>
         <div className="field"><label>Adversaire *</label><input value={adversaire} onChange={e=>setAdversaire(e.target.value)} placeholder="Nom équipe adverse"/></div>
-        <div className="field"><label>Ce que tu sais d'eux</label><textarea value={infos} onChange={e=>setInfos(e.target.value)} rows={3} placeholder="Défense, joueuses dangereuses..."/></div>
-        <div className="field"><label>Format</label>
-          <div className="flex gap2">{["court","long"].map(v=><button key={v} className={`btn ${mode===v?"btn-accent":"btn-ghost"}`} onClick={()=>setMode(v)}>{v==="court"?"Court":"Détaillé"}</button>)}</div>
-        </div>
-        <p className="muted mt2">{players.length} joueuses · {matches.length} matchs</p>
+        <div className="field"><label>Ce que tu sais d'eux</label><textarea value={infos} onChange={e=>setInfos(e.target.value)} rows={3} placeholder="Défense, joueuses dangereuses, résultats récents..."/></div>
+        <div className="field"><label>Format</label><div className="flex gap2">{["court","long"].map(v=><button key={v} className={`btn ${mode===v?"btn-accent":"btn-ghost"}`} onClick={()=>setMode(v)}>{v==="court"?"Court":"Détaillé"}</button>)}</div></div>
+        <p className="muted mt2">{joueuses.length} joueuses · {matches.length} matchs · {saison.seances_par_semaine} séances/sem</p>
         <button className="btn btn-accent" style={{width:"100%",marginTop:14}} onClick={generate} disabled={loading||!adversaire}>{loading?"⏳ Génération...":"🎯 Générer le plan"}</button>
       </div>
       <div className="card">
         <div className="card-title">📋 Plan généré</div>
-        {loading?<div className="ai-loading"><div className="spinner"/><span>Analyse...</span></div>
-          :output?<div className="ai-output">{output}</div>
-          :<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
+        {loading?<div className="ai-loading"><div className="spinner"/><span>Analyse...</span></div>:output?<div className="ai-output">{output}</div>:<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ─── TRAINING ─── */
+function TrainingPage({ club, saison, joueuses, evals, calendrier }) {
+  const [focus, setFocus] = useState("");
+  const [duree, setDuree] = useState("90");
+  const [output, setOutput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const today = new Date().toISOString().split("T")[0];
+  const next = calendrier.find(e=>e.type==="match"&&e.date>=today);
+  const nbEntr = calendrier.filter(e=>e.type==="entrainement"&&e.date>=today&&(!next||e.date<=next.date)).length;
+
+  const generate = async () => {
+    setLoading(true); setOutput("");
+    const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} (${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3}. ${ev?.notes||j.notes_globales||""}`; }).join("\n");
+    try {
+      const prompt = `Tu es assistant coach basket. Plan d'entraînement adapté.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""}\nEFFECTIF:\n${p||"Non renseigné"}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n${next?`PROCHAIN MATCH: vs ${next.adversaire} le ${next.date} (${nbEntr} entraînement${nbEntr>1?"s":""} disponible${nbEntr>1?"s":""})`:"Aucun match imminent — travail de fond possible"}\n\nFormat: Échauffement → Exercices techniques (durée + consignes) → Situation de jeu → Retour au calme. Très opérationnel, adapté au niveau.`;
+      setOutput(await askClaude(null, [{role:"user",content:prompt}]));
+    } catch(e) { setOutput(`Erreur: ${e.message}`); }
+    setLoading(false);
+  };
+
+  return <div>
+    <h2 className="page-title">Plan <span>d'entraînement</span></h2>
+    {next && <div className="card" style={{borderColor:"var(--blue)",background:"var(--blue-dim)",marginBottom:16,padding:14}}>
+      <p style={{fontSize:11,color:"var(--muted)"}}>🔜 Prépare le match vs {next.adversaire} — {next.date}</p>
+      <p style={{fontSize:13,color:"var(--muted)",marginTop:2}}>{nbEntr} entraînement{nbEntr>1?"s":""} disponible{nbEntr>1?"s":""} avant le match</p>
+    </div>}
+    <div className="grid2">
+      <div className="card">
+        <div className="card-title">⚙️ Paramètres</div>
+        <div className="field"><label>Focus de séance</label><input value={focus} onChange={e=>setFocus(e.target.value)} placeholder="Ex: Défense zone, tirs transition, PNR..."/></div>
+        <div className="field"><label>Durée</label><select value={duree} onChange={e=>setDuree(e.target.value)}>{["60","75","90","105","120"].map(d=><option key={d} value={d}>{d} min</option>)}</select></div>
+        <button className="btn btn-accent" style={{width:"100%",marginTop:14}} onClick={generate} disabled={loading}>{loading?"⏳...":"⚡ Générer l'entraînement"}</button>
+      </div>
+      <div className="card">
+        <div className="card-title">📋 Plan généré</div>
+        {loading?<div className="ai-loading"><div className="spinner"/><span>Génération...</span></div>:output?<div className="ai-output">{output}</div>:<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
       </div>
     </div>
   </div>;
 }
 
 /* ─── SPARRING ─── */
-function SparringPage({ club, players, matches, chatHistory, reloadChat, coachName }) {
+function SparringPage({ club, saison, joueuses, evals, matches, chatHistory, reloadChat, coachName, allMatches }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef();
-
-  const STARTERS = [
-    "Challenge ma compo de départ pour le prochain match",
-    "Est-ce que je sur-utilise certaines joueuses ?",
-    "Qu'est-ce que mes stats révèlent que je ne vois pas ?",
-    "Comment gérer une joueuse qui perd confiance ?",
-    "Ma défense est-elle adaptée à mon effectif ?",
-    "Qu'est-ce que je devrais travailler en priorité ?"
-  ];
-
-  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [chatHistory, loading]);
+  const STARTERS = ["Challenge ma compo de départ pour le prochain match","Est-ce que je sur-utilise certaines joueuses ?","Qu'est-ce que mes stats révèlent que je ne vois pas ?","Comment gérer une joueuse qui perd confiance ?","Ma défense est-elle adaptée à mon effectif ?","Qu'est-ce que je devrais travailler en priorité ?"];
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[chatHistory,loading]);
 
   const send = async msg => {
-    if (!msg.trim() || loading) return;
+    if (!msg.trim()||loading) return;
     setInput(""); setLoading(true);
-    try { await db.addChat({ club_id:club.id, role:"user", content:msg.trim(), coach:coachName }); await reloadChat(); } catch {}
-    const p = players.map(pl=>`${pl.prenom} ${pl.nom} (#${pl.numero}, ${pl.poste}) Tir:${pl.tir||3} Déf:${pl.defense||3} Phys:${pl.physique||3} Mental:${pl.mental||3}. ${pl.notes||""}`).join("\n");
-    const m = matches.slice(0,8).map(ma=>`${ma.date||"–"} vs ${ma.adversaire}: ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux} | ${ma.defense_adverse||"?"} | ${ma.resume||"–"}`).join("\n");
-    const sys = `Tu es un sparring partner exigeant pour un coach basket. Challenger ses décisions, pas les valider. Avocat du diable bienveillant.\n\nRÈGLES: Ne valide jamais sans questionner. Identifie les angles morts et biais. Adapte-toi au contexte. Direct, inconfortable si nécessaire, toujours constructif.\n\nCLUB: ${coachName} | ${club.name}\nCONTEXTE: ${club.contexte||"Non renseigné"}\nEFFECTIF:\n${p||"Non renseigné"}\nMATCHS:\n${m||"Aucun"}`;
+    try { await db.addChat({ club_id:club.id, saison_id:saison.id, role:"user", content:msg.trim(), coach:coachName }); await reloadChat(); } catch {}
+    const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
+    const m = matches.slice(0,8).map(ma=>`${ma.date||"–"} vs ${ma.adversaire}: ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux}\nAtt: ${ma.mon_attaque||"–"} | Déf: ${ma.ma_defense||"–"}`).join("\n\n");
+    const prev = allMatches?.filter(ma=>ma.saison_id!==saison.id).slice(0,8).map(ma=>`[Saison préc.] ${ma.date} vs ${ma.adversaire}: ${ma.score_nous}-${ma.score_eux}`).join("\n")||"";
+    const sys = `Tu es un sparring partner exigeant pour un coach basket. Challenge ses décisions, ne les valide pas. Avocat du diable bienveillant.
+
+RÈGLES: Ne valide jamais sans questionner. Identifie angles morts et biais. Adapte au niveau U15. Direct, inconfortable si nécessaire, constructif. Exploite l'historique inter-saisons.
+
+CLUB: ${coachName} | ${club.name} | ${saison.equipe} ${saison.nom} | ${saison.division} | ${saison.seances_par_semaine} séances/sem
+CONTEXTE: ${club.contexte||"Non renseigné"}
+EFFECTIF:\n${p||"Non renseigné"}
+MATCHS SAISON:\n${m||"Aucun"}
+${prev?`HISTORIQUE SAISONS PRÉCÉDENTES:\n${prev}`:""}`;
     const msgs = [...chatHistory.map(h=>({role:h.role,content:h.content})), {role:"user",content:msg.trim()}];
     try {
-      const reply = await askClaude(sys, msgs);
-      await db.addChat({ club_id:club.id, role:"assistant", content:reply });
-    } catch(e) {
-      await db.addChat({ club_id:club.id, role:"assistant", content:`Erreur: ${e.message}` });
-    }
-    await reloadChat();
-    setLoading(false);
+      const reply = await askClaude(sys, msgs, 1500);
+      await db.addChat({ club_id:club.id, saison_id:saison.id, role:"assistant", content:reply });
+    } catch(e) { await db.addChat({ club_id:club.id, saison_id:saison.id, role:"assistant", content:`Erreur: ${e.message}` }); }
+    await reloadChat(); setLoading(false);
   };
 
   return <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 52px - 60px)",gap:0}}>
@@ -560,24 +786,19 @@ function SparringPage({ club, players, matches, chatHistory, reloadChat, coachNa
     <div className="sparring-wrap">
       <div className="sparring-header">
         <div className="sparring-avatar">🧠</div>
-        <div>
-          <div className="sparring-name">Cortex</div>
-          <div className="sparring-desc">Je challenge, je questionne — pour que tu coaches mieux.</div>
-        </div>
+        <div><div className="sparring-name">Cortex</div><div className="sparring-desc">Je challenge, je questionne — pour que tu coaches mieux.</div></div>
         <div className="sparring-status"><span className="dot"/><span>Actif</span></div>
-        {chatHistory.length>0 && <button className="btn btn-ghost" style={{marginLeft:8,fontSize:10,padding:"4px 10px"}} onClick={async()=>{await db.clearChat(club.id);await reloadChat();}}>Effacer</button>}
+        {chatHistory.length>0 && <button className="btn btn-ghost" style={{marginLeft:8,fontSize:10,padding:"4px 10px"}} onClick={async()=>{await db.clearChat(saison.id);await reloadChat();}}>Effacer</button>}
       </div>
       <div className="chat-messages">
         {chatHistory.length===0 && <div style={{textAlign:"center",padding:"20px 0"}}>
           <p style={{fontFamily:"'Lora',serif",fontStyle:"italic",color:"var(--muted)",fontSize:14,marginBottom:6}}>"Le meilleur coach n'est pas celui qui a toutes les réponses,<br/>mais celui qui pose les bonnes questions."</p>
           <p style={{fontSize:12,color:"var(--border)"}}>— Cortex</p>
         </div>}
-        {chatHistory.map((h,i)=>(
-          <div key={i} className={`msg ${h.role==="user"?"user":"bot"}`}>
-            <div className="msg-avatar">{h.role==="user"?"👤":"🧠"}</div>
-            <div className="msg-bubble">{h.content}</div>
-          </div>
-        ))}
+        {chatHistory.map((h,i)=><div key={i} className={`msg ${h.role==="user"?"user":"bot"}`}>
+          <div className="msg-avatar">{h.role==="user"?"👤":"🧠"}</div>
+          <div className="msg-bubble">{h.content}</div>
+        </div>)}
         {loading && <div className="msg bot"><div className="msg-avatar">🧠</div><div className="typing-indicator"><span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/></div></div>}
         <div ref={bottomRef}/>
       </div>
@@ -590,158 +811,102 @@ function SparringPage({ club, players, matches, chatHistory, reloadChat, coachNa
   </div>;
 }
 
-/* ─── TRAINING ─── */
-function TrainingPage({ club, players }) {
-  const [focus, setFocus] = useState("");
-  const [duree, setDuree] = useState("90");
-  const [output, setOutput] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const generate = async () => {
-    setLoading(true); setOutput("");
-    const p = players.map(pl=>`${pl.prenom} (${pl.poste}) Tir:${pl.tir||3} Déf:${pl.defense||3}. ${pl.notes||""}`).join("\n");
-    try {
-      const prompt = `Tu es assistant coach basket. Génère un plan d'entraînement adapté.\n\nCONTEXTE: ${club.contexte||"Non renseigné"}\nEFFECTIF:\n${p||"Non renseigné"}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n\nFormat: Échauffement → Exercices techniques (durée + consignes précises) → Situation de jeu → Retour au calme. Très opérationnel.`;
-      setOutput(await askClaude(null, [{role:"user",content:prompt}]));
-    } catch(e) { setOutput(`Erreur: ${e.message}`); }
-    setLoading(false);
-  };
-
-  return <div>
-    <h2 className="page-title">Plan <span>d'entraînement</span></h2>
-    <div className="grid2">
-      <div className="card">
-        <div className="card-title">⚙️ Paramètres</div>
-        <div className="field"><label>Focus de séance</label><input value={focus} onChange={e=>setFocus(e.target.value)} placeholder="Ex: Défense zone, tirs en transition..."/></div>
-        <div className="field"><label>Durée</label>
-          <select value={duree} onChange={e=>setDuree(e.target.value)}>{["60","75","90","105","120"].map(d=><option key={d} value={d}>{d} min</option>)}</select>
-        </div>
-        <button className="btn btn-accent" style={{width:"100%",marginTop:14}} onClick={generate} disabled={loading}>{loading?"⏳...":"⚡ Générer l'entraînement"}</button>
-      </div>
-      <div className="card">
-        <div className="card-title">📋 Plan généré</div>
-        {loading?<div className="ai-loading"><div className="spinner"/><span>Génération...</span></div>
-          :output?<div className="ai-output">{output}</div>
-          :<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
-      </div>
-    </div>
-  </div>;
-}
-
 /* ─── ROOT ─── */
 export default function App() {
   const [session, setSessionState] = useState(()=>getSession());
   const [club, setClub] = useState(null);
-  const [players, setPlayers] = useState([]);
+  const [saison, setSaison] = useState(null);
+  const [saisons, setSaisons] = useState([]);
+  const [joueuses, setJoueuses] = useState([]);
+  const [evals, setEvals] = useState([]);
   const [matches, setMatches] = useState([]);
+  const [allMatches, setAllMatches] = useState([]);
+  const [calendrier, setCalendrier] = useState([]);
   const [chatHistory, setChatHistory] = useState([]);
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("sparring");
+  const [showSaisonModal, setShowSaisonModal] = useState(false);
+
+  const loadSaisonData = async (clubId, saisonId) => {
+    const [j,ev,m,am,cal,ch] = await Promise.all([db.getJoueuses(clubId), db.getEvals(saisonId), db.getMatches(saisonId), db.getAllMatches(clubId), db.getCalendrier(saisonId), db.getChat(saisonId)]);
+    setJoueuses(j||[]); setEvals(ev||[]); setMatches(m||[]); setAllMatches(am||[]); setCalendrier(cal||[]); setChatHistory(ch||[]);
+  };
 
   const loadAll = async sess => {
     if (!sess) { setReady(true); return; }
     try {
-      const [c, p, m, ch] = await Promise.all([
-        db.getClub(sess.clubId), db.getPlayers(sess.clubId),
-        db.getMatches(sess.clubId), db.getChat(sess.clubId)
-      ]);
+      const [c,ss] = await Promise.all([db.getClub(sess.clubId), db.getSaisons(sess.clubId)]);
       if (!c) { saveSession(null); setSessionState(null); setReady(true); return; }
-      setClub(c); setPlayers(p||[]); setMatches(m||[]); setChatHistory(ch||[]);
+      setClub(c); setSaisons(ss||[]);
+      const sid = sess.saisonId || ss?.find(s=>s.active)?.id || ss?.[0]?.id;
+      if (!sid) { setReady(true); return; }
+      setSaison(ss?.find(s=>s.id===sid)||null);
+      await loadSaisonData(sess.clubId, sid);
     } catch(e) { console.error(e); }
     setReady(true);
   };
 
-  useEffect(()=>{ loadAll(session); }, []);
+  useEffect(()=>{ loadAll(session); },[]);
 
-  const reloadPlayers = async () => setPlayers((await db.getPlayers(session.clubId))||[]);
-  const reloadMatches = async () => setMatches((await db.getMatches(session.clubId))||[]);
-  const reloadChat    = async () => setChatHistory((await db.getChat(session.clubId))||[]);
-
-  const logout = () => {
-    saveSession(null); setSessionState(null); setClub(null);
-    setPlayers([]); setMatches([]); setChatHistory([]); setReady(true);
+  const switchSaison = async sid => {
+    const s = saisons.find(x=>x.id===sid); setSaison(s);
+    const newSess = {...session, saisonId:sid}; setSessionState(newSess); saveSession(newSess);
+    await loadSaisonData(session.clubId, sid);
   };
 
+  const reloadJ = async () => { setJoueuses((await db.getJoueuses(session.clubId))||[]); setEvals((await db.getEvals(saison.id))||[]); };
+  const reloadM = async () => setMatches((await db.getMatches(saison.id))||[]);
+  const reloadCal = async () => setCalendrier((await db.getCalendrier(saison.id))||[]);
+  const reloadChat = async () => setChatHistory((await db.getChat(saison.id))||[]);
+
+  const logout = () => { saveSession(null); setSessionState(null); setClub(null); setSaison(null); setReady(true); };
   const onAuth = async sess => { setSessionState(sess); await loadAll(sess); };
 
   const NAV = [
-    { group:"IA", items:[
-      {id:"sparring", icon:"🧠", label:"Sparring Partner"},
-      {id:"gameplan", icon:"🎯", label:"Plan de match"},
-      {id:"training", icon:"⚡", label:"Entraînement"},
-    ]},
-    { group:"Club", items:[
-      {id:"players", icon:"👥", label:"Effectif"},
-      {id:"matches", icon:"📋", label:"Matchs"},
-    ]},
+    { group:"IA", items:[{id:"sparring",icon:"🧠",label:"Sparring Partner"},{id:"gameplan",icon:"🎯",label:"Plan de match"},{id:"training",icon:"⚡",label:"Entraînement"}]},
+    { group:"Saison", items:[{id:"calendrier",icon:"📅",label:"Calendrier"},{id:"joueuses",icon:"👥",label:"Effectif"},{id:"matchs",icon:"📋",label:"Matchs"}]},
   ];
   const FLAT_NAV = NAV.flatMap(g=>g.items);
 
-  if (!ready) return (
-    <><style>{CSS}</style><div className="court-bg"/>
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
-      <div className="spinner" style={{width:24,height:24}}/>
-      <p style={{color:"var(--muted)",fontFamily:"Oswald",letterSpacing:2,textTransform:"uppercase",fontSize:12}}>Chargement...</p>
-    </div></>
-  );
+  if (!ready) return (<><style>{CSS}</style><div className="court-bg"/><div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}><div className="spinner" style={{width:24,height:24}}/><p style={{color:"var(--muted)",fontFamily:"Oswald",letterSpacing:2,textTransform:"uppercase",fontSize:12}}>Chargement...</p></div></>);
+  if (!session||!club||!saison) return (<><style>{CSS}</style><div className="court-bg"/><AuthPage onAuth={onAuth}/></>);
 
-  if (!session || !club) return (
-    <><style>{CSS}</style><div className="court-bg"/><AuthPage onAuth={onAuth}/></>
-  );
-
-  return (
-    <><style>{CSS}</style><div className="court-bg"/>
+  return (<><style>{CSS}</style><div className="court-bg"/>
     <div className="app">
       <header className="header">
         <div className="logo">Coach<em>Club</em> 🏀</div>
         <div className="header-right">
           <span className="club-badge">{club.name}</span>
+          <span className="saison-badge" onClick={()=>setShowSaisonModal(true)}>{saison.equipe} {saison.nom}</span>
           <span style={{fontSize:12,color:"var(--muted)"}}>👤 {session.coachName}</span>
           <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 12px"}} onClick={logout}>⏏</button>
         </div>
       </header>
       <div className="main">
         <aside className="sidebar">
-          {NAV.map(g=>(
-            <div key={g.group} className="nav-group">
-              <div className="nav-label">{g.group}</div>
-              {g.items.map(item=>(
-                <div key={item.id} className={`nav-item ${page===item.id?"active":""}`} onClick={()=>setPage(item.id)}>
-                  <span className="ni">{item.icon}</span>{item.label}
-                </div>
-              ))}
-            </div>
-          ))}
-          <div style={{padding:"0 12px"}}>
-            <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.6,padding:"10px 6px",borderTop:"1px solid var(--border)"}}>
-              <div>{players.length} joueuses</div>
-              <div>{matches.length} matchs</div>
-              <div>{club.coaches?.length||1} coach{(club.coaches?.length||1)>1?"s":""}</div>
-            </div>
-          </div>
+          {NAV.map(g=><div key={g.group} className="nav-group">
+            <div className="nav-label">{g.group}</div>
+            {g.items.map(item=><div key={item.id} className={`nav-item ${page===item.id?"active":""}`} onClick={()=>setPage(item.id)}><span className="ni">{item.icon}</span>{item.label}</div>)}
+          </div>)}
+          <div style={{padding:"0 12px"}}><div style={{fontSize:11,color:"var(--muted)",lineHeight:1.6,padding:"10px 6px",borderTop:"1px solid var(--border)"}}><div>{joueuses.length} joueuses</div><div>{matches.length} matchs</div><div>{saison.seances_par_semaine} séances/sem</div></div></div>
         </aside>
         <main className="content">
-          {page==="sparring" && <SparringPage club={club} players={players} matches={matches} chatHistory={chatHistory} reloadChat={reloadChat} coachName={session.coachName}/>}
-          {page==="gameplan" && <GamePlanPage club={club} players={players} matches={matches}/>}
-          {page==="training" && <TrainingPage club={club} players={players}/>}
-          {page==="players" && <PlayersPage club={club} players={players} reload={reloadPlayers}/>}
-          {page==="matches" && <MatchesPage club={club} matches={matches} reload={reloadMatches}/>}
+          {page==="sparring" && <SparringPage club={club} saison={saison} joueuses={joueuses} evals={evals} matches={matches} chatHistory={chatHistory} reloadChat={reloadChat} coachName={session.coachName} allMatches={allMatches}/>}
+          {page==="gameplan" && <GamePlanPage club={club} saison={saison} joueuses={joueuses} evals={evals} matches={matches} calendrier={calendrier}/>}
+          {page==="training" && <TrainingPage club={club} saison={saison} joueuses={joueuses} evals={evals} calendrier={calendrier}/>}
+          {page==="calendrier" && <CalendrierPage club={club} saison={saison} calendrier={calendrier} matches={matches} reload={reloadCal}/>}
+          {page==="joueuses" && <JoueusesPage club={club} saison={saison} joueuses={joueuses} evals={evals} reload={reloadJ}/>}
+          {page==="matchs" && <MatchsPage club={club} saison={saison} matches={matches} reload={reloadM}/>}
         </main>
       </div>
-      <nav className="bottom-nav">
-        <div className="bottom-nav-inner">
-          {FLAT_NAV.map(item=>(
-            <button key={item.id} className={`bnav-item ${page===item.id?"active":""}`} onClick={()=>setPage(item.id)}>
-              <span className="bnav-icon">{item.icon}</span>
-              <span className="bnav-label">{item.label==="Sparring Partner"?"Cortex":item.label==="Plan de match"?"Match":item.label==="Entraînement"?"Training":item.label}</span>
-            </button>
-          ))}
-          <button className="bnav-item" onClick={logout}>
-            <span className="bnav-icon">⏏</span>
-            <span className="bnav-label">Quitter</span>
-          </button>
-        </div>
-      </nav>
-    </div></>
-  );
+      <nav className="bottom-nav"><div className="bottom-nav-inner">
+        {FLAT_NAV.map(item=><button key={item.id} className={`bnav-item ${page===item.id?"active":""}`} onClick={()=>setPage(item.id)}>
+          <span className="bnav-icon">{item.icon}</span>
+          <span className="bnav-label">{item.label==="Sparring Partner"?"Cortex":item.label==="Plan de match"?"Match":item.label==="Entraînement"?"Training":item.label}</span>
+        </button>)}
+        <button className="bnav-item" onClick={logout}><span className="bnav-icon">⏏</span><span className="bnav-label">Quitter</span></button>
+      </div></nav>
+    </div>
+    {showSaisonModal && <SaisonModal club={club} saisons={saisons} currentSaisonId={saison.id} onSelect={switchSaison} onClose={()=>setShowSaisonModal(false)} onNewSaison={async id=>{const ss=await db.getSaisons(club.id);setSaisons(ss);await switchSaison(id);}}/>}
+  </>);
 }
