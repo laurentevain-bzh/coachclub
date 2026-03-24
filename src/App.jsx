@@ -64,6 +64,13 @@ const db = {
   getAllChat: cid => sb(`chat_history?club_id=eq.${cid}&order=created_at.asc`),
   addChat: m => sb(`chat_history`, { method: "POST", body: m, prefer: "return=minimal" }),
   clearChat: sid => sb(`chat_history?saison_id=eq.${sid}`, { method: "DELETE", prefer: "return=minimal" }),
+  // PLANS
+  getPlansMatch: sid => sb(`plans_match?saison_id=eq.${sid}&order=created_at.desc`),
+  createPlanMatch: p => sb(`plans_match`, { method: "POST", body: p }),
+  deletePlanMatch: id => sb(`plans_match?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
+  getPlansEntr: sid => sb(`plans_entrainement?saison_id=eq.${sid}&order=created_at.desc`),
+  createPlanEntr: p => sb(`plans_entrainement`, { method: "POST", body: p }),
+  deletePlanEntr: id => sb(`plans_entrainement?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
 };
 
 const getSession = () => { try { const s = localStorage.getItem("cc_sess"); return s ? JSON.parse(s) : null; } catch { return null; } };
@@ -266,11 +273,78 @@ function SkillBar({ label, value }) {
 }
 
 /* ─── AUTH ─── */
+function ForgotPassword({ onBack }) {
+  const [step, setStep] = useState("verify"); // verify | reset | done
+  const [clubName, setClubName] = useState("");
+  const [email, setEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const verify = async () => {
+    setErr(""); setLoading(true);
+    if (!clubName.trim() || !email.trim()) { setErr("Tous les champs sont requis."); setLoading(false); return; }
+    const id = clubName.trim().toLowerCase().replace(/\s+/g,"_");
+    try {
+      const club = await db.getClub(id);
+      if (!club) { setErr("Club introuvable."); setLoading(false); return; }
+      if (!club.email_recuperation || club.email_recuperation.toLowerCase() !== email.trim().toLowerCase()) {
+        setErr("Email incorrect pour ce club."); setLoading(false); return;
+      }
+      setStep("reset");
+    } catch(e) { setErr(`Erreur: ${e.message}`); }
+    setLoading(false);
+  };
+
+  const reset = async () => {
+    setErr(""); setLoading(true);
+    if (!newPassword || newPassword.length < 4) { setErr("Mot de passe trop court (4 caractères min)."); setLoading(false); return; }
+    if (newPassword !== confirm) { setErr("Les mots de passe ne correspondent pas."); setLoading(false); return; }
+    const id = clubName.trim().toLowerCase().replace(/\s+/g,"_");
+    try {
+      const hashed = await hashPassword(newPassword);
+      await db.updateClub(id, { password: hashed });
+      setStep("done");
+    } catch(e) { setErr(`Erreur: ${e.message}`); }
+    setLoading(false);
+  };
+
+  return <div className="auth-wrap"><div className="auth-box">
+    <div className="auth-top"><div className="auth-logo">Coach<em>Club</em> 🏀</div><div className="auth-sub">Récupération de mot de passe</div></div>
+    <div className="auth-body">
+      {step==="verify" && <>
+        <p className="muted mb3" style={{marginBottom:16}}>Saisis le nom de ton club et l'email de récupération défini à la création.</p>
+        <div className="field"><label>Nom du club</label><input value={clubName} onChange={e=>setClubName(e.target.value)} placeholder="Ex: BC Wasquehal"/></div>
+        <div className="field"><label>Email de récupération</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="ton@email.com"/></div>
+        {err && <p style={{color:"var(--red)",fontSize:13,marginBottom:12}}>{err}</p>}
+        <button className="btn btn-accent" style={{width:"100%"}} onClick={verify} disabled={loading}>{loading?"...":"Vérifier"}</button>
+      </>}
+      {step==="reset" && <>
+        <p className="muted mb3" style={{marginBottom:16}}>✅ Email vérifié ! Choisis un nouveau mot de passe pour <strong>{clubName}</strong>.</p>
+        <div className="field"><label>Nouveau mot de passe</label><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Nouveau mot de passe"/></div>
+        <div className="field"><label>Confirmer</label><input type="password" value={confirm} onChange={e=>setConfirm(e.target.value)} placeholder="Répète le mot de passe"/></div>
+        {err && <p style={{color:"var(--red)",fontSize:13,marginBottom:12}}>{err}</p>}
+        <button className="btn btn-accent" style={{width:"100%"}} onClick={reset} disabled={loading}>{loading?"...":"Réinitialiser"}</button>
+      </>}
+      {step==="done" && <>
+        <p style={{color:"var(--green)",fontSize:15,marginBottom:16,textAlign:"center"}}>✅ Mot de passe réinitialisé !</p>
+        <p className="muted" style={{textAlign:"center",marginBottom:16}}>Tu peux maintenant te connecter avec ton nouveau mot de passe.</p>
+      </>}
+      <button className="btn btn-ghost" style={{width:"100%",marginTop:12}} onClick={onBack}>← Retour à la connexion</button>
+    </div>
+  </div></div>;
+}
+
 function AuthPage({ onAuth }) {
   const [tab, setTab] = useState("join");
+  const [showForgot, setShowForgot] = useState(false);
   const [clubName, setClubName] = useState(""); const [password, setPassword] = useState(""); const [coachName, setCoachName] = useState("");
+  const [email, setEmail] = useState("");
   const [saisonNom, setSaisonNom] = useState("2025-2026"); const [equipe, setEquipe] = useState(""); const [division, setDivision] = useState(""); const [seances, setSeances] = useState("2"); const [contexte, setContexte] = useState("");
   const [err, setErr] = useState(""); const [loading, setLoading] = useState(false);
+
+  if (showForgot) return <ForgotPassword onBack={()=>setShowForgot(false)}/>;
 
   const handle = async () => {
     setErr(""); setLoading(true);
@@ -280,9 +354,10 @@ function AuthPage({ onAuth }) {
       const hashed = await hashPassword(password);
       if (tab === "create") {
         if (!equipe.trim()) { setErr("Nom équipe requis."); setLoading(false); return; }
+        if (!email.trim()) { setErr("Email de récupération requis."); setLoading(false); return; }
         const existing = await db.getClub(id);
         if (existing) { setErr("Club déjà existant."); setLoading(false); return; }
-        await db.createClub({ id, name: clubName.trim(), password: hashed, coaches: [coachName.trim()], contexte: contexte.trim() });
+        await db.createClub({ id, name: clubName.trim(), password: hashed, coaches: [coachName.trim()], contexte: contexte.trim(), email_recuperation: email.trim().toLowerCase() });
         const saisonId = uid();
         await db.createSaison({ id: saisonId, club_id: id, nom: saisonNom, equipe: equipe.trim(), division: division.trim(), seances_par_semaine: parseInt(seances)||2, active: true });
         const sess = { clubId: id, coachName: coachName.trim(), saisonId };
@@ -313,6 +388,7 @@ function AuthPage({ onAuth }) {
       <div className="field"><label>Mot de passe</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Partagé entre coachs"/></div>
       <div className="field"><label>Ton prénom</label><input value={coachName} onChange={e=>setCoachName(e.target.value)} placeholder="Ex: Laurent"/></div>
       {tab==="create" && <>
+        <div className="field"><label>Email de récupération</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="ton@email.com — pour récupérer l'accès"/></div>
         <hr className="divider"/>
         <p style={{fontFamily:"Oswald",fontSize:10,letterSpacing:1,textTransform:"uppercase",color:"var(--muted)",marginBottom:12}}>Première saison</p>
         <div className="grid2">
@@ -329,6 +405,7 @@ function AuthPage({ onAuth }) {
       </>}
       {err && <p style={{color:"var(--red)",fontSize:13,marginBottom:12}}>{err}</p>}
       <button className="btn btn-accent" style={{width:"100%"}} onClick={handle} disabled={loading}>{loading?"...":tab==="create"?"Créer le club":"Rejoindre"}</button>
+      {tab==="join" && <p style={{textAlign:"center",marginTop:14}}><span style={{fontSize:13,color:"var(--muted)",cursor:"pointer",textDecoration:"underline"}} onClick={()=>setShowForgot(true)}>Mot de passe oublié ?</span></p>}
     </div>
   </div></div>;
 }
@@ -590,7 +667,7 @@ function MatchsPage({ club, saison, matches, reload }) {
 }
 
 /* ─── CALENDRIER ─── */
-function CalendrierPage({ club, saison, calendrier, matches, reload }) {
+function CalendrierPage({ club, saison, calendrier, matches, reload, onNavigate }) {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ date:"", heure:"", adversaire:"", lieu:"Domicile", type:"match", notes:"" });
   const [saving, setSaving] = useState(false);
@@ -608,15 +685,24 @@ function CalendrierPage({ club, saison, calendrier, matches, reload }) {
   const next = calendrier.find(e=>e.date>=today && e.type==="match");
   const grouped = calendrier.reduce((acc,e)=>{ const m=e.date?.slice(0,7)||"–"; if(!acc[m]) acc[m]=[]; acc[m].push(e); return acc; }, {});
 
+  const handleClick = (e) => {
+    if (e.date < today) return; // match passé, pas cliquable
+    if (e.type === "match") onNavigate("gameplan", { adversaire: e.adversaire, calendrierEvent: e });
+    else if (e.type === "entrainement") onNavigate("training", { calendrierEvent: e });
+  };
+
   return <div>
     <div className="flex jc-sb items-c" style={{marginBottom:20}}>
       <h2 className="page-title" style={{margin:0}}>Calendrier</h2>
       <button className="btn btn-accent" onClick={()=>setShowModal(true)}>+ Événement</button>
     </div>
-    {next && <div className="card" style={{borderColor:"var(--accent)",background:"var(--accent-glow)",marginBottom:20,padding:14}}>
-      <p style={{fontSize:11,color:"var(--muted)",fontFamily:"Oswald",letterSpacing:1,textTransform:"uppercase"}}>🔜 Prochain match</p>
+    {next && <div className="card" style={{borderColor:"var(--accent)",background:"var(--accent-glow)",marginBottom:20,padding:14,cursor:"pointer"}} onClick={()=>handleClick(next)}>
+      <p style={{fontSize:11,color:"var(--muted)",fontFamily:"Oswald",letterSpacing:1,textTransform:"uppercase"}}>🔜 Prochain match — clique pour préparer</p>
       <p style={{fontSize:16,fontWeight:600,marginTop:4}}>vs {next.adversaire}</p>
       <p style={{fontSize:13,color:"var(--muted)",marginTop:2}}>{next.date} {next.heure} · {next.lieu}</p>
+      <div className="flex gap2" style={{marginTop:8}}>
+        <span className="badge b-yellow">🎯 Plan de match</span>
+      </div>
     </div>}
     {calendrier.length===0 && <div className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:12}}>📅</div><p className="muted">Aucun événement. Ajoute les matchs de la saison !</p></div>}
     {Object.entries(grouped).sort().map(([month,events])=>(
@@ -625,15 +711,16 @@ function CalendrierPage({ club, saison, calendrier, matches, reload }) {
         {events.map(e=>{
           const isNext = e.id===next?.id;
           const linked = matches.find(m=>m.id===e.match_id);
-          return <div key={e.id} className={`cal-item ${isNext?"next":""}`}>
+          const isFuture = e.date >= today;
+          return <div key={e.id} className={`cal-item ${isNext?"next":""}`} style={{cursor:isFuture?"pointer":"default"}} onClick={()=>isFuture&&handleClick(e)}>
             <div className="cal-date">{e.date}<br/><span style={{fontSize:10}}>{e.heure}</span></div>
             <div className="cal-info">
               <div className="cal-title">{e.type==="match"?`vs ${e.adversaire}`:e.notes||e.type}</div>
-              <div className="cal-sub">{e.lieu}{linked?` · ${linked.score_nous}-${linked.score_eux}`:""}</div>
+              <div className="cal-sub">{e.lieu}{linked?` · ${linked.score_nous}-${linked.score_eux}`:""}{isFuture && e.type==="match"?" · 🎯 Préparer":""}{isFuture && e.type==="entrainement"?" · ⚡ Préparer":""}</div>
             </div>
             <span className={`badge ${e.type==="match"?"b-yellow":e.type==="entrainement"?"b-blue":"b-green"}`}>{e.type==="match"?"Match":e.type==="entrainement"?"Entraîn.":"Tournoi"}</span>
             {linked && <span className={`badge ${parseInt(linked.score_nous)>parseInt(linked.score_eux)?"b-green":"b-red"}`}>{parseInt(linked.score_nous)>parseInt(linked.score_eux)?"V":"D"}</span>}
-            <button className="btn btn-danger" style={{padding:"3px 8px",fontSize:10}} onClick={()=>del(e.id)}>✕</button>
+            <button className="btn btn-danger" style={{padding:"3px 8px",fontSize:10}} onClick={ev=>{ev.stopPropagation();del(e.id);}}>✕</button>
           </div>;
         })}
       </div>
@@ -661,33 +748,55 @@ function CalendrierPage({ club, saison, calendrier, matches, reload }) {
 }
 
 /* ─── GAME PLAN ─── */
-function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier }) {
-  const [adversaire, setAdversaire] = useState("");
+function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier, initContext }) {
+  const today = new Date().toISOString().split("T")[0];
+  const next = calendrier.find(e=>e.type==="match"&&e.date>=today);
+  const [adversaire, setAdversaire] = useState(initContext?.adversaire || next?.adversaire || "");
   const [infos, setInfos] = useState("");
   const [mode, setMode] = useState("court");
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
-  const today = new Date().toISOString().split("T")[0];
-  const next = calendrier.find(e=>e.type==="match"&&e.date>=today);
-  useEffect(()=>{ if(next&&!adversaire) setAdversaire(next.adversaire); },[next]);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [plansExistants, setPlansExistants] = useState([]);
+  const calEvent = initContext?.calendrierEvent || null;
+
+  useEffect(()=>{ loadPlans(); },[saison.id]);
+  const loadPlans = async () => setPlansExistants((await db.getPlansMatch(saison.id))||[]);
 
   const generate = async () => {
     if (!adversaire) return;
-    setLoading(true); setOutput("");
+    setLoading(true); setOutput(""); setSaved(false);
     const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
-    const m = matches.slice(0,6).map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux}\nAtt: ${ma.mon_attaque?.slice(0,60)||"–"} | Déf: ${ma.ma_defense?.slice(0,60)||"–"}\nAdv: ${ma.attaque_adverse?.slice(0,60)||"–"}`).join("\n\n");
+    const m = matches.slice(0,6).map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux}\nAtt: ${ma.mon_attaque?.slice(0,60)||"–"} | Déf: ${ma.ma_defense?.slice(0,60)||"–"}`).join("\n\n");
     const prev = matches.find(ma=>ma.adversaire?.toLowerCase()===adversaire.toLowerCase());
     const fmt = mode==="court"?"Format COURT: 1 page max, bullet points opérationnels.":"Format DÉTAILLÉ: analyse tactique complète, justifie chaque choix.";
     try {
-      const prompt = `Tu es assistant coach basket expert.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""} | ${saison.seances_par_semaine} séances/semaine\nEFFECTIF:\n${p||"Non renseigné"}\nHISTORIQUE:\n${m||"Aucun"}\n${prev?`\nMATCH PRÉCÉDENT vs ${adversaire} (${prev.date}): ${prev.score_nous}-${prev.score_eux}\nNotre attaque: ${prev.mon_attaque||"–"}\nNotre défense: ${prev.ma_defense||"–"}\nLeur attaque: ${prev.attaque_adverse||"–"}\nLeur défense: ${prev.defense_adverse_notes||"–"}`:""}${next?`\nPROCHAIN MATCH: ${next.date} ${next.heure} vs ${adversaire}`:""}\n\nADVERSAIRE: ${adversaire}\nINFOS: ${infos||"Rien"}\n\nGénère un plan de match. ${fmt}\nCouvre: défense recommandée, système offensif, matchups clés, travail à faire sur les ${saison.seances_par_semaine} séances avant le match, message équipe.`;
+      const prompt = `Tu es assistant coach basket expert.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""} | ${saison.seances_par_semaine} séances/semaine\nEFFECTIF:\n${p||"Non renseigné"}\nHISTORIQUE:\n${m||"Aucun"}\n${prev?`\nMATCH PRÉCÉDENT vs ${adversaire} (${prev.date}): ${prev.score_nous}-${prev.score_eux}\nNotre attaque: ${prev.mon_attaque||"–"}\nNotre défense: ${prev.ma_defense||"–"}\nLeur attaque: ${prev.attaque_adverse||"–"}\nLeur défense: ${prev.defense_adverse_notes||"–"}`:""}${calEvent?`\nMATCH: ${calEvent.date} ${calEvent.heure} vs ${adversaire} (${calEvent.lieu})`:""}${next&&!calEvent?`\nPROCHAIN MATCH: ${next.date} ${next.heure} vs ${adversaire}`:""}\n\nADVERSAIRE: ${adversaire}\nINFOS: ${infos||"Rien"}\n\nGénère un plan de match. ${fmt}\nCouvre: défense recommandée, système offensif, matchups clés, travail à faire sur les ${saison.seances_par_semaine} séances avant le match, message équipe.`;
       setOutput(await askClaude(null, [{role:"user",content:prompt}]));
     } catch(e) { setOutput(`Erreur: ${e.message}`); }
     setLoading(false);
   };
 
+  const savePlan = async () => {
+    if (!output) return;
+    setSaving(true);
+    try {
+      await db.createPlanMatch({ id:uid(), club_id:club.id, saison_id:saison.id, calendrier_id:calEvent?.id||null, adversaire, contenu:output, format:mode });
+      await loadPlans(); setSaved(true);
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const delPlan = async id => { await db.deletePlanMatch(id); await loadPlans(); };
+
   return <div>
     <h2 className="page-title">Plan de <span>match</span></h2>
-    {next && <div className="card" style={{borderColor:"var(--accent)",background:"var(--accent-glow)",marginBottom:16,padding:14}}>
+    {calEvent && <div className="card" style={{borderColor:"var(--accent)",background:"var(--accent-glow)",marginBottom:16,padding:14}}>
+      <p style={{fontSize:11,color:"var(--muted)"}}>📅 Préparation depuis le calendrier</p>
+      <p style={{fontSize:15,fontWeight:600,marginTop:4}}>vs {calEvent.adversaire} — {calEvent.date} {calEvent.heure} · {calEvent.lieu}</p>
+    </div>}
+    {!calEvent && next && <div className="card" style={{borderColor:"var(--accent)",background:"var(--accent-glow)",marginBottom:16,padding:14}}>
       <p style={{fontSize:11,color:"var(--muted)"}}>🔜 Prochain match détecté</p>
       <p style={{fontSize:15,fontWeight:600,marginTop:4}}>vs {next.adversaire} — {next.date} {next.heure}</p>
     </div>}
@@ -702,35 +811,80 @@ function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier }) {
       </div>
       <div className="card">
         <div className="card-title">📋 Plan généré</div>
-        {loading?<div className="ai-loading"><div className="spinner"/><span>Analyse...</span></div>:output?<div className="ai-output">{output}</div>:<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
+        {loading?<div className="ai-loading"><div className="spinner"/><span>Analyse...</span></div>
+          :output?<>
+            <div className="ai-output" style={{marginBottom:12}}>{output}</div>
+            <button className="btn btn-accent" style={{width:"100%"}} onClick={savePlan} disabled={saving||saved}>
+              {saved?"✅ Plan sauvegardé !":saving?"...":"💾 Sauvegarder ce plan"}
+            </button>
+          </>
+          :<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
       </div>
     </div>
+    {plansExistants.length>0 && <div style={{marginTop:24}}>
+      <h3 style={{fontFamily:"Oswald",fontSize:16,letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>Plans sauvegardés <span style={{color:"var(--accent)"}}>({plansExistants.length})</span></h3>
+      {plansExistants.map(p=><div key={p.id} className="card" style={{marginBottom:10}}>
+        <div className="flex jc-sb items-c" style={{marginBottom:8}}>
+          <div>
+            <span style={{fontWeight:600}}>vs {p.adversaire}</span>
+            <span className="muted" style={{marginLeft:8,fontSize:12}}>{p.created_at?.slice(0,10)}</span>
+            <span className={`badge ${p.format==="court"?"b-yellow":"b-blue"}`} style={{marginLeft:8}}>{p.format}</span>
+          </div>
+          <button className="btn btn-danger" style={{padding:"3px 10px"}} onClick={()=>delPlan(p.id)}>✕</button>
+        </div>
+        <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.6,whiteSpace:"pre-wrap",maxHeight:200,overflow:"hidden",maskImage:"linear-gradient(to bottom, black 60%, transparent 100%)"}}>{p.contenu}</div>
+        <button className="btn btn-ghost" style={{marginTop:8,fontSize:11}} onClick={()=>setOutput(p.contenu)}>Afficher en entier</button>
+      </div>)}
+    </div>}
   </div>;
 }
 
 /* ─── TRAINING ─── */
-function TrainingPage({ club, saison, joueuses, evals, calendrier }) {
-  const [focus, setFocus] = useState("");
+function TrainingPage({ club, saison, joueuses, evals, calendrier, initContext }) {
+  const today = new Date().toISOString().split("T")[0];
+  const next = calendrier.find(e=>e.type==="match"&&e.date>=today);
+  const calEvent = initContext?.calendrierEvent || null;
+  const nbEntr = calendrier.filter(e=>e.type==="entrainement"&&e.date>=today&&(!next||e.date<=next.date)).length;
+  const [focus, setFocus] = useState(initContext?.focus || "");
   const [duree, setDuree] = useState("90");
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
-  const today = new Date().toISOString().split("T")[0];
-  const next = calendrier.find(e=>e.type==="match"&&e.date>=today);
-  const nbEntr = calendrier.filter(e=>e.type==="entrainement"&&e.date>=today&&(!next||e.date<=next.date)).length;
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [plansExistants, setPlansExistants] = useState([]);
+
+  useEffect(()=>{ loadPlans(); },[saison.id]);
+  const loadPlans = async () => setPlansExistants((await db.getPlansEntr(saison.id))||[]);
 
   const generate = async () => {
-    setLoading(true); setOutput("");
+    setLoading(true); setOutput(""); setSaved(false);
     const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} (${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3}. ${ev?.notes||j.notes_globales||""}`; }).join("\n");
     try {
-      const prompt = `Tu es assistant coach basket. Plan d'entraînement adapté.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""}\nEFFECTIF:\n${p||"Non renseigné"}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n${next?`PROCHAIN MATCH: vs ${next.adversaire} le ${next.date} (${nbEntr} entraînement${nbEntr>1?"s":""} disponible${nbEntr>1?"s":""})`:"Aucun match imminent — travail de fond possible"}\n\nFormat: Échauffement → Exercices techniques (durée + consignes) → Situation de jeu → Retour au calme. Très opérationnel, adapté au niveau.`;
+      const prompt = `Tu es assistant coach basket. Plan d'entraînement adapté.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""}\nEFFECTIF:\n${p||"Non renseigné"}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n${next?`PROCHAIN MATCH: vs ${next.adversaire} le ${next.date} (${nbEntr} entraînement${nbEntr>1?"s":""} disponible${nbEntr>1?"s":""})`:"Aucun match imminent — travail de fond possible"}\n${calEvent?`CET ENTRAÎNEMENT est le ${calEvent.date} ${calEvent.heure}`:""}.\n\nFormat: Échauffement → Exercices techniques (durée + consignes) → Situation de jeu → Retour au calme. Très opérationnel, adapté au niveau.`;
       setOutput(await askClaude(null, [{role:"user",content:prompt}]));
     } catch(e) { setOutput(`Erreur: ${e.message}`); }
     setLoading(false);
   };
 
+  const savePlan = async () => {
+    if (!output) return;
+    setSaving(true);
+    try {
+      await db.createPlanEntr({ id:uid(), club_id:club.id, saison_id:saison.id, calendrier_id:calEvent?.id||null, focus:focus||"Général", duree, contenu:output });
+      await loadPlans(); setSaved(true);
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const delPlan = async id => { await db.deletePlanEntr(id); await loadPlans(); };
+
   return <div>
     <h2 className="page-title">Plan <span>d'entraînement</span></h2>
-    {next && <div className="card" style={{borderColor:"var(--blue)",background:"var(--blue-dim)",marginBottom:16,padding:14}}>
+    {calEvent && <div className="card" style={{borderColor:"var(--blue)",background:"var(--blue-dim)",marginBottom:16,padding:14}}>
+      <p style={{fontSize:11,color:"var(--muted)"}}>📅 Entraînement du {calEvent.date} {calEvent.heure}</p>
+      {next && <p style={{fontSize:13,color:"var(--muted)",marginTop:4}}>Prochain match : vs {next.adversaire} le {next.date} · {nbEntr} séance{nbEntr>1?"s":""} disponible{nbEntr>1?"s":""}</p>}
+    </div>}
+    {!calEvent && next && <div className="card" style={{borderColor:"var(--blue)",background:"var(--blue-dim)",marginBottom:16,padding:14}}>
       <p style={{fontSize:11,color:"var(--muted)"}}>🔜 Prépare le match vs {next.adversaire} — {next.date}</p>
       <p style={{fontSize:13,color:"var(--muted)",marginTop:2}}>{nbEntr} entraînement{nbEntr>1?"s":""} disponible{nbEntr>1?"s":""} avant le match</p>
     </div>}
@@ -743,9 +897,30 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier }) {
       </div>
       <div className="card">
         <div className="card-title">📋 Plan généré</div>
-        {loading?<div className="ai-loading"><div className="spinner"/><span>Génération...</span></div>:output?<div className="ai-output">{output}</div>:<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
+        {loading?<div className="ai-loading"><div className="spinner"/><span>Génération...</span></div>
+          :output?<>
+            <div className="ai-output" style={{marginBottom:12}}>{output}</div>
+            <button className="btn btn-accent" style={{width:"100%"}} onClick={savePlan} disabled={saving||saved}>
+              {saved?"✅ Plan sauvegardé !":saving?"...":"💾 Sauvegarder ce plan"}
+            </button>
+          </>
+          :<div className="ai-loading"><span>Le plan apparaîtra ici.</span></div>}
       </div>
     </div>
+    {plansExistants.length>0 && <div style={{marginTop:24}}>
+      <h3 style={{fontFamily:"Oswald",fontSize:16,letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>Plans sauvegardés <span style={{color:"var(--accent)"}}>({plansExistants.length})</span></h3>
+      {plansExistants.map(p=><div key={p.id} className="card" style={{marginBottom:10}}>
+        <div className="flex jc-sb items-c" style={{marginBottom:8}}>
+          <div>
+            <span style={{fontWeight:600}}>{p.focus}</span>
+            <span className="muted" style={{marginLeft:8,fontSize:12}}>{p.created_at?.slice(0,10)} · {p.duree}min</span>
+          </div>
+          <button className="btn btn-danger" style={{padding:"3px 10px"}} onClick={()=>delPlan(p.id)}>✕</button>
+        </div>
+        <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.6,whiteSpace:"pre-wrap",maxHeight:200,overflow:"hidden",maskImage:"linear-gradient(to bottom, black 60%, transparent 100%)"}}>{p.contenu}</div>
+        <button className="btn btn-ghost" style={{marginTop:8,fontSize:11}} onClick={()=>setOutput(p.contenu)}>Afficher en entier</button>
+      </div>)}
+    </div>}
   </div>;
 }
 
@@ -825,7 +1000,13 @@ export default function App() {
   const [chatHistory, setChatHistory] = useState([]);
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("sparring");
+  const [navCtx, setNavCtx] = useState(null);
   const [showSaisonModal, setShowSaisonModal] = useState(false);
+
+  const navigate = (targetPage, ctx = null) => {
+    setNavCtx(ctx);
+    setPage(targetPage);
+  };
 
   const loadSaisonData = async (clubId, saisonId) => {
     const [j,ev,m,am,cal,ch] = await Promise.all([db.getJoueuses(clubId), db.getEvals(saisonId), db.getMatches(saisonId), db.getAllMatches(clubId), db.getCalendrier(saisonId), db.getChat(saisonId)]);
@@ -886,21 +1067,21 @@ export default function App() {
         <aside className="sidebar">
           {NAV.map(g=><div key={g.group} className="nav-group">
             <div className="nav-label">{g.group}</div>
-            {g.items.map(item=><div key={item.id} className={`nav-item ${page===item.id?"active":""}`} onClick={()=>setPage(item.id)}><span className="ni">{item.icon}</span>{item.label}</div>)}
+            {g.items.map(item=><div key={item.id} className={`nav-item ${page===item.id?"active":""}`} onClick={()=>navigate(item.id)}><span className="ni">{item.icon}</span>{item.label}</div>)}
           </div>)}
           <div style={{padding:"0 12px"}}><div style={{fontSize:11,color:"var(--muted)",lineHeight:1.6,padding:"10px 6px",borderTop:"1px solid var(--border)"}}><div>{joueuses.length} joueuses</div><div>{matches.length} matchs</div><div>{saison.seances_par_semaine} séances/sem</div></div></div>
         </aside>
         <main className="content">
           {page==="sparring" && <SparringPage club={club} saison={saison} joueuses={joueuses} evals={evals} matches={matches} chatHistory={chatHistory} reloadChat={reloadChat} coachName={session.coachName} allMatches={allMatches}/>}
-          {page==="gameplan" && <GamePlanPage club={club} saison={saison} joueuses={joueuses} evals={evals} matches={matches} calendrier={calendrier}/>}
-          {page==="training" && <TrainingPage club={club} saison={saison} joueuses={joueuses} evals={evals} calendrier={calendrier}/>}
-          {page==="calendrier" && <CalendrierPage club={club} saison={saison} calendrier={calendrier} matches={matches} reload={reloadCal}/>}
+          {page==="gameplan" && <GamePlanPage club={club} saison={saison} joueuses={joueuses} evals={evals} matches={matches} calendrier={calendrier} initContext={navCtx}/>}
+          {page==="training" && <TrainingPage club={club} saison={saison} joueuses={joueuses} evals={evals} calendrier={calendrier} initContext={navCtx}/>}
+          {page==="calendrier" && <CalendrierPage club={club} saison={saison} calendrier={calendrier} matches={matches} reload={reloadCal} onNavigate={navigate}/>}
           {page==="joueuses" && <JoueusesPage club={club} saison={saison} joueuses={joueuses} evals={evals} reload={reloadJ}/>}
           {page==="matchs" && <MatchsPage club={club} saison={saison} matches={matches} reload={reloadM}/>}
         </main>
       </div>
       <nav className="bottom-nav"><div className="bottom-nav-inner">
-        {FLAT_NAV.map(item=><button key={item.id} className={`bnav-item ${page===item.id?"active":""}`} onClick={()=>setPage(item.id)}>
+        {FLAT_NAV.map(item=><button key={item.id} className={`bnav-item ${page===item.id?"active":""}`} onClick={()=>navigate(item.id)}>
           <span className="bnav-icon">{item.icon}</span>
           <span className="bnav-label">{item.label==="Sparring Partner"?"Cortex":item.label==="Plan de match"?"Match":item.label==="Entraînement"?"Training":item.label}</span>
         </button>)}
