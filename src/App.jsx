@@ -1362,15 +1362,18 @@ export default function App() {
   };
 
   const loadSaisonData = async (clubId, saisonId) => {
-    try {
-      const [j,ev,m,am,cal,ch] = await Promise.all([
-        db.getJoueuses(clubId), db.getEvals(saisonId), db.getMatches(saisonId),
-        db.getAllMatches(clubId), db.getCalendrier(saisonId), db.getChat(saisonId)
-      ]);
-      setJoueuses(j||[]); setEvals(ev||[]); setMatches(m||[]); setAllMatches(am||[]); setCalendrier(cal||[]); setChatHistory(ch||[]);
-      // Stats saison — optionnel, ne bloque pas si erreur
-      try { const ss = await db.getStatsSaison(saisonId); setStatsSaison(ss||[]); } catch { setStatsSaison([]); }
-    } catch(e) { console.error("loadSaisonData error:", e); }
+    const safe = async (fn) => { try { return await fn(); } catch(e) { console.warn("Query failed:", e.message); return null; } };
+    const [j,ev,m,am,cal,ch] = await Promise.all([
+      safe(()=>db.getJoueuses(clubId)),
+      safe(()=>db.getEvals(saisonId)),
+      safe(()=>db.getMatches(saisonId)),
+      safe(()=>db.getAllMatches(clubId)),
+      safe(()=>db.getCalendrier(saisonId)),
+      safe(()=>db.getChat(saisonId)),
+    ]);
+    setJoueuses(j||[]); setEvals(ev||[]); setMatches(m||[]); setAllMatches(am||[]); setCalendrier(cal||[]); setChatHistory(ch||[]);
+    const ss = await safe(()=>db.getStatsSaison(saisonId));
+    setStatsSaison(ss||[]);
   };
 
   const loadAll = async sess => {
