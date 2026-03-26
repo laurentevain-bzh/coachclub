@@ -19,7 +19,7 @@ const askClaudeWithPDFs = async (pdfs, prompt) => {
   ];
   const res = await fetch("/api/claude", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 2000, messages: [{ role: "user", content }] }),
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 4000, messages: [{ role: "user", content }] }),
   });
   if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
   const data = await res.json();
@@ -624,13 +624,13 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
   const [saving, setSaving] = useState(false);
   const [statsMatch, setStatsMatch] = useState([]);
   const fileRefs = { feuille: useRef(), score: useRef(), tirs: useRef() };
-  const emptyForm = () => ({ date:"", adversaire:"", score_nous:"", score_eux:"", defense_adverse:"", joueuses_cles:"", mon_attaque:"", ma_defense:"", attaque_adverse:"", defense_adverse_notes:"", stats_joueuses:[], stats_equipe:{}, progression_score:{}, pdf_tirs_url:"" });
+  const emptyForm = () => ({ date:"", adversaire:"", score_nous:"", score_eux:"", defense_adverse:"", joueuses_cles:"", mon_attaque:"", ma_defense:"", attaque_adverse:"", defense_adverse_notes:"", stats_joueuses:[], stats_equipe:{}, progression_score:{}, pdf_tirs_url:"", stats_adversaires:[] });
   const [form, setForm] = useState(emptyForm());
 
   const openNew = () => { setEditMatch(null); setPdfs({ feuille:null, score:null, tirs:null }); setTirsPdfFile(null); setPdfStatus({ feuille:"", score:"", tirs:"" }); setForm(emptyForm()); setStatsMatch([]); setShowModal(true); };
   const openEdit = m => {
     setEditMatch(m);
-    setForm({ date:m.date||"", adversaire:m.adversaire||"", score_nous:m.score_nous||"", score_eux:m.score_eux||"", defense_adverse:m.defense_adverse||"", joueuses_cles:m.joueuses_cles||"", mon_attaque:m.mon_attaque||"", ma_defense:m.ma_defense||"", attaque_adverse:m.attaque_adverse||"", defense_adverse_notes:m.defense_adverse_notes||"", stats_joueuses:m.stats_joueuses||[], stats_equipe:m.stats_equipe||{}, progression_score:m.progression_score||{}, pdf_tirs_url:m.pdf_tirs_url||"" });
+    setForm({ date:m.date||"", adversaire:m.adversaire||"", score_nous:m.score_nous||"", score_eux:m.score_eux||"", defense_adverse:m.defense_adverse||"", joueuses_cles:m.joueuses_cles||"", mon_attaque:m.mon_attaque||"", ma_defense:m.ma_defense||"", attaque_adverse:m.attaque_adverse||"", defense_adverse_notes:m.defense_adverse_notes||"", stats_joueuses:m.stats_joueuses||[], stats_equipe:m.stats_equipe||{}, progression_score:m.progression_score||{}, pdf_tirs_url:m.pdf_tirs_url||"", stats_adversaires:m.stats_adversaires||[] });
     setPdfs({ feuille:null, score:null, tirs:null }); setTirsPdfFile(null); setPdfStatus({ feuille:"", score:"", tirs:"" });
     db.getStatsMatch(m.id).then(s=>setStatsMatch(s||[]));
     setShowModal(true);
@@ -659,23 +659,11 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
     setParsing(true);
     try {
       const allPdfs = Object.entries(pdfs).filter(([,v])=>v).map(([,v])=>v);
-      const txt = await askClaudeWithPDFs(allPdfs,
-        `Tu as des documents d'un match basket U15 féminin FFBB. Analyse-les tous et réponds UNIQUEMENT en JSON avec cette structure exacte:
-{
-  "adversaire": "",
-  "score_nous": 0,
-  "score_eux": 0,
-  "date": "YYYY-MM-DD",
-  "defense_type": "",
-  "stats_joueuses": [{"nom":"","prenom":"","numero":0,"titulaire":false,"points":0,"tirs_reussis":0,"tirs_tentes":0,"tirs_3pts":0,"lf_reussis":0,"lf_tentes":0,"fautes":0,"temps_jeu":""}],
-  "stats_equipe": {"points_banc":0,"avantage_max":0,"serie_max":0,"total_tirs_reussis":0,"total_tirs_tentes":0},
-  "progression_score": {"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0},
-  "mon_attaque": "analyse offensive",
-  "ma_defense": "analyse défensive",
-  "attaque_adverse": "comment l'adversaire a attaqué",
-  "defense_adverse": "leur défense et comment on y a répondu"
-}`);
-      const p = JSON.parse(txt.replace(/```json|```/g,"").trim());
+      // Prompt compact pour éviter la troncature JSON
+      const prompt = `Documents match basket U15 FFBB. Réponds UNIQUEMENT en JSON valide, sans texte autour:\n{"adversaire":"","score_nous":0,"score_eux":0,"date":"YYYY-MM-DD","defense_type":"","qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"points_banc":0,"avantage_max":0,"serie_max":0,"stats_locaux":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0,"tps":""}],"stats_visiteurs":[{"nom":"","prenom":"","numero":0,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0}],"mon_attaque":"","ma_defense":"","attaque_adverse":"","defense_adverse":""}`;
+      const txt = await askClaudeWithPDFs(allPdfs, prompt);
+      const clean = txt.replace(/```json|```/g,"").trim();
+      const p = JSON.parse(clean);
       setForm(f=>({
         ...f,
         adversaire: p.adversaire||f.adversaire,
@@ -683,22 +671,27 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
         score_eux: String(p.score_eux||f.score_eux),
         date: p.date||f.date,
         defense_adverse: p.defense_type||f.defense_adverse,
-        stats_joueuses: p.stats_joueuses||f.stats_joueuses,
-        stats_equipe: p.stats_equipe||f.stats_equipe,
-        progression_score: p.progression_score||f.progression_score,
+        stats_joueuses: p.stats_locaux||f.stats_joueuses,
+        stats_equipe: { points_banc:p.points_banc||0, avantage_max:p.avantage_max||0, serie_max:p.serie_max||0 },
+        progression_score: { qt1_nous:p.qt1_nous||0,qt1_eux:p.qt1_eux||0,qt2_nous:p.qt2_nous||0,qt2_eux:p.qt2_eux||0,qt3_nous:p.qt3_nous||0,qt3_eux:p.qt3_eux||0,qt4_nous:p.qt4_nous||0,qt4_eux:p.qt4_eux||0 },
         mon_attaque: p.mon_attaque||f.mon_attaque,
         ma_defense: p.ma_defense||f.ma_defense,
         attaque_adverse: p.attaque_adverse||f.attaque_adverse,
         defense_adverse_notes: p.defense_adverse||f.defense_adverse_notes,
-        joueuses_cles: p.stats_joueuses?.filter(j=>j.points>0).map(j=>`${j.nom}: ${j.points}pts`).join(", ")||f.joueuses_cles,
+        joueuses_cles: (p.stats_visiteurs||[]).filter(j=>j.pts>0).map(j=>`${j.nom}: ${j.pts}pts`).join(", ")||f.joueuses_cles,
+        stats_adversaires: p.stats_visiteurs||[],
       }));
-      // Pré-remplir les stats match en liant aux joueuses connues
-      const statsPreview = (p.stats_joueuses||[]).map(sj => {
-        const match = joueuses.find(j => j.nom.toLowerCase()===sj.nom?.toLowerCase() || j.prenom?.toLowerCase()===sj.prenom?.toLowerCase());
-        return { ...sj, joueuse_id: match?.id||null, joueuse_nom: match ? `${match.prenom} ${match.nom}` : `${sj.prenom||""} ${sj.nom||""}`.trim() };
+      // Lier les stats locaux aux joueuses du club
+      const statsPreview = (p.stats_locaux||[]).map(sj => {
+        const match = joueuses.find(j =>
+          j.nom?.toLowerCase()===sj.nom?.toLowerCase() ||
+          j.prenom?.toLowerCase()===sj.prenom?.toLowerCase() ||
+          String(j.numero)===String(sj.numero)
+        );
+        return { ...sj, points:sj.pts, tirs_reussis:sj.tirs_r, tirs_tentes:sj.tirs_t, tirs_3pts:sj.t3, lf_reussis:sj.lf_r, lf_tentes:sj.lf_t, temps_jeu:sj.tps, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
       });
       setStatsMatch(statsPreview);
-    } catch(e) { alert(`Erreur d'analyse: ${e.message}`); }
+    } catch(e) { alert(`Erreur d'analyse PDF: ${e.message}\n\nEssaie d'analyser un seul document à la fois si le problème persiste.`); }
     setParsing(false);
   };
 
@@ -712,7 +705,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
       if (tirsPdfFile) {
         pdfTirsUrl = await uploadPdfTirs(matchId, tirsPdfFile);
       }
-      const payload = { club_id:club.id, saison_id:saison.id, date:form.date, adversaire:form.adversaire, score_nous:form.score_nous, score_eux:form.score_eux, defense_adverse:form.defense_adverse, joueuses_cles:form.joueuses_cles, mon_attaque:form.mon_attaque, ma_defense:form.ma_defense, attaque_adverse:form.attaque_adverse, defense_adverse_notes:form.defense_adverse_notes, stats_joueuses:form.stats_joueuses, stats_equipe:form.stats_equipe, progression_score:form.progression_score, pdf_tirs_url:pdfTirsUrl };
+      const payload = { club_id:club.id, saison_id:saison.id, date:form.date, adversaire:form.adversaire, score_nous:form.score_nous, score_eux:form.score_eux, defense_adverse:form.defense_adverse, joueuses_cles:form.joueuses_cles, mon_attaque:form.mon_attaque, ma_defense:form.ma_defense, attaque_adverse:form.attaque_adverse, defense_adverse_notes:form.defense_adverse_notes, stats_joueuses:form.stats_joueuses, stats_equipe:form.stats_equipe, progression_score:form.progression_score, pdf_tirs_url:pdfTirsUrl, stats_adversaires:form.stats_adversaires||[] };
       if (editMatch) { await db.updateMatch(editMatch.id, payload); }
       else { await db.createMatch({ id:matchId, ...payload }); }
       // Sauvegarder stats individuelles liées aux joueuses
@@ -767,55 +760,78 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
 
     {/* DETAIL MODAL */}
     {showDetail && <div className="overlay" onClick={()=>setShowDetail(null)}>
-      <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:700}}>
+      <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:760}}>
         <div className="modal-hdr">
           <span className="modal-ttl">vs {showDetail.adversaire} — {showDetail.date}</span>
           <button className="close" onClick={()=>setShowDetail(null)}>✕</button>
         </div>
-        {/* Score + quarts */}
-        <div className="flex gap2 items-c" style={{marginBottom:16}}>
-          <div style={{fontFamily:"Oswald",fontSize:32,fontWeight:700,color:parseInt(showDetail.score_nous)>parseInt(showDetail.score_eux)?"var(--green)":"var(--red)"}}>{showDetail.score_nous}–{showDetail.score_eux}</div>
-          {showDetail.progression_score && Object.keys(showDetail.progression_score).length>0 && <div style={{display:"flex",gap:8,marginLeft:16}}>
-            {[1,2,3,4].map(q=><div key={q} style={{textAlign:"center",background:"var(--surface2)",padding:"6px 10px",borderRadius:2}}>
-              <div style={{fontSize:9,color:"var(--muted)",fontFamily:"Oswald",letterSpacing:1}}>QT{q}</div>
-              <div style={{fontSize:13,fontWeight:600}}>{showDetail.progression_score[`qt${q}_nous`]||0}–{showDetail.progression_score[`qt${q}_eux`]||0}</div>
-            </div>)}
-          </div>}
+
+        {/* Score + type défense */}
+        <div className="flex gap2 items-c" style={{marginBottom:12,flexWrap:"wrap"}}>
+          <div style={{fontFamily:"Oswald",fontSize:36,fontWeight:700,color:parseInt(showDetail.score_nous)>parseInt(showDetail.score_eux)?"var(--green)":"var(--red)"}}>{showDetail.score_nous}–{showDetail.score_eux}</div>
+          {showDetail.defense_adverse && <span className="badge b-yellow" style={{fontSize:12,padding:"4px 10px"}}>{showDetail.defense_adverse}</span>}
+          {showDetail.pdf_tirs_url && <a href={showDetail.pdf_tirs_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{fontSize:11,padding:"5px 12px",textDecoration:"none",marginLeft:"auto"}}>🎯 Positions de tirs ↗</a>}
         </div>
+
+        {/* Quarts-temps */}
+        {showDetail.progression_score && Object.keys(showDetail.progression_score).length>0 && <div style={{display:"flex",gap:8,marginBottom:16}}>
+          {[1,2,3,4].map(q=><div key={q} style={{flex:1,textAlign:"center",background:"var(--surface2)",padding:"8px",borderRadius:2}}>
+            <div style={{fontSize:9,color:"var(--muted)",fontFamily:"Oswald",letterSpacing:1,marginBottom:4}}>QT{q}</div>
+            <div style={{fontSize:14,fontWeight:700}}>{showDetail.progression_score[`qt${q}_nous`]||0}</div>
+            <div style={{fontSize:10,color:"var(--muted)"}}>–</div>
+            <div style={{fontSize:14,color:"var(--muted)"}}>{showDetail.progression_score[`qt${q}_eux`]||0}</div>
+          </div>)}
+        </div>}
+
         {/* Stats équipe */}
         {showDetail.stats_equipe && Object.keys(showDetail.stats_equipe).length>0 && <div className="flex gap2" style={{marginBottom:16,flexWrap:"wrap"}}>
-          {showDetail.stats_equipe.avantage_max && <span className="badge b-yellow">Avantage max: {showDetail.stats_equipe.avantage_max}</span>}
-          {showDetail.stats_equipe.serie_max && <span className="badge b-blue">Série max: {showDetail.stats_equipe.serie_max}</span>}
-          {showDetail.stats_equipe.points_banc !== undefined && <span className="badge b-green">Pts banc: {showDetail.stats_equipe.points_banc}</span>}
+          {showDetail.stats_equipe.avantage_max>0 && <span className="badge b-yellow">Avantage max: +{showDetail.stats_equipe.avantage_max}</span>}
+          {showDetail.stats_equipe.serie_max>0 && <span className="badge b-blue">Série max: {showDetail.stats_equipe.serie_max}</span>}
+          {showDetail.stats_equipe.points_banc>0 && <span className="badge b-green">Pts banc: {showDetail.stats_equipe.points_banc}</span>}
         </div>}
-        {/* Stats joueuses */}
+
+        {/* Stats joueuses MON ÉQUIPE */}
         {statsMatch.length>0 && <>
           <hr className="divider"/>
-          <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>Stats joueuses</p>
-          <div style={{overflowX:"auto"}}>
+          <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--green)",marginBottom:8}}>📊 Mon équipe</p>
+          <div style={{overflowX:"auto",marginBottom:16}}>
             <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
-                {["Joueuse","T","Pts","Tirs","3pts","LF","F"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+                {["Joueuse","T","Pts","Tirs","3pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
-              <tbody>{statsMatch.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)22"}}>
-                <td style={{padding:"6px 8px",fontWeight:500}}>{s.joueuse_nom||`Joueuse ${i+1}`}</td>
-                <td style={{padding:"6px 8px"}}>{s.titulaire?"✓":""}</td>
-                <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.tirs_reussis||0}/{s.tirs_tentes||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.tirs_3pts||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.lf_reussis||0}/{s.lf_tentes||0}</td>
-                <td style={{padding:"6px 8px",color:s.fautes>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
+              <tbody>{statsMatch.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)33",background:s.titulaire?"var(--accent-glow)":"transparent"}}>
+                <td style={{padding:"6px 8px",fontWeight:s.titulaire?600:400}}>{s.joueuse_nom||`#${s.numero||i+1}`}</td>
+                <td style={{padding:"6px 8px",color:"var(--accent)"}}>{s.titulaire?"★":""}</td>
+                <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||s.pts||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.tirs_reussis||s.tirs_r||0}/{s.tirs_tentes||s.tirs_t||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.tirs_3pts||s.t3||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.lf_reussis||s.lf_r||0}/{s.lf_tentes||s.lf_t||0}</td>
+                <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
               </tr>)}</tbody>
             </table>
           </div>
         </>}
-        {/* PDF tirs */}
-        {showDetail.pdf_tirs_url && <>
-          <hr className="divider"/>
-          <a href={showDetail.pdf_tirs_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{width:"100%",justifyContent:"center",textDecoration:"none"}}>
-            🎯 Voir les positions de tirs (PDF)
-          </a>
+
+        {/* Stats adversaires */}
+        {showDetail.stats_adversaires?.length>0 && <>
+          <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--red)",marginBottom:8}}>📊 Adversaire</p>
+          <div style={{overflowX:"auto",marginBottom:16}}>
+            <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
+                {["Joueuse","Pts","Tirs","3pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{showDetail.stats_adversaires.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)33"}}>
+                <td style={{padding:"6px 8px"}}>{s.prenom||""} {s.nom||""} {s.numero?`#${s.numero}`:""}</td>
+                <td style={{padding:"6px 8px",fontWeight:700,color:s.pts>0?"var(--red)":"var(--muted)"}}>{s.pts||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.tirs_r||0}/{s.tirs_t||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.t3||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.lf_r||0}/{s.lf_t||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.fautes||0}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
         </>}
+
         {/* Résumé structuré */}
         {(showDetail.mon_attaque||showDetail.ma_defense||showDetail.attaque_adverse||showDetail.defense_adverse_notes) && <>
           <hr className="divider"/>
@@ -826,6 +842,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
             {showDetail.defense_adverse_notes && <div className="summary-block adv-def"><div className="summary-block-title">🔒 Défense adverse</div><p style={{fontSize:13,lineHeight:1.6}}>{showDetail.defense_adverse_notes}</p></div>}
           </div>
         </>}
+
         <div className="flex gap2 jc-end mt3">
           <button className="btn btn-ghost" onClick={()=>{setShowDetail(null);openEdit(showDetail);}}>✏️ Modifier</button>
           <button className="btn btn-ghost" onClick={()=>setShowDetail(null)}>Fermer</button>
