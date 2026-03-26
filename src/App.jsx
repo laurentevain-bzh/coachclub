@@ -53,7 +53,7 @@ const db = {
   getEvalJoueuse: (jid, sid) => sb(`evaluations?joueuse_id=eq.${jid}&saison_id=eq.${sid}`).then(r => r?.[0] || null),
   createEval: e => sb(`evaluations`, { method: "POST", body: e }),
   updateEval: (id, d) => sb(`evaluations?id=eq.${id}`, { method: "PATCH", body: d }),
-  getMatches: sid => sb(`matches?saison_id=eq.${sid}&order=date.desc`),
+  deleteMatch: id => sb(`matches?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
   getAllMatches: cid => sb(`matches?club_id=eq.${cid}&order=date.desc`),
   createMatch: m => sb(`matches`, { method: "POST", body: m }),
   updateMatch: (id, d) => sb(`matches?id=eq.${id}`, { method: "PATCH", body: d }),
@@ -474,7 +474,7 @@ function SaisonModal({ club, saisons, currentSaisonId, onSelect, onClose, onNewS
 }
 
 /* ─── JOUEUSES ─── */
-function JoueusesPage({ club, saison, joueuses, evals, reload, statsSaison }) {
+function JoueusesPage({ club, saison, joueuses, evals, reload, statsSaison, matches }) {
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [tab, setTab] = useState("profil");
@@ -636,7 +636,15 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
     setShowModal(true);
   };
 
-  const openDetail = async m => {
+  const delMatch = async m => {
+    if (!confirm(`Supprimer le match vs ${m.adversaire} du ${m.date} et toutes ses données ?`)) return;
+    try {
+      await db.deleteStatsMatch(m.id);
+      await db.deleteMatch(m.id);
+      await reload();
+      setShowDetail(null);
+    } catch(e) { alert(`Erreur: ${e.message}`); }
+  };
     const stats = await db.getStatsMatch(m.id);
     setStatsMatch(stats||[]);
     setShowDetail(m);
@@ -850,6 +858,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
         </>}
 
         <div className="flex gap2 jc-end mt3">
+          <button className="btn btn-danger" onClick={()=>delMatch(showDetail)}>🗑️ Supprimer</button>
           <button className="btn btn-ghost" onClick={()=>{setShowDetail(null);openEdit(showDetail);}}>✏️ Modifier</button>
           <button className="btn btn-ghost" onClick={()=>setShowDetail(null)}>Fermer</button>
         </div>
