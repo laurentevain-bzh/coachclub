@@ -675,7 +675,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
       const promptStats = `Tu analyses des documents officiels FFBB d'un match de basket U15 feminin.
 REGLE : L'equipe de l'utilisateur contient WASQUEHAL. L'adversaire est l'AUTRE equipe.
 Reponds UNIQUEMENT en JSON valide sans texte autour :
-{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"points_banc":0,"avantage_max":0,"serie_max":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0}]}`;
+{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"points_banc":0,"avantage_max":0,"serie_max":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"int2":0,"ext2":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"int2":0,"ext2":0,"t3":0,"lf":0,"fautes":0}]}`;
 
       const txt1 = await askClaudeWithPDFs(allPdfs, promptStats);
       const p = JSON.parse(txt1.replace(/\`\`\`json|\`\`\`/g,"").trim());
@@ -717,7 +717,7 @@ Réponds avec exactement ce format JSON :
           j.prenom?.toLowerCase()===sj.prenom?.toLowerCase() ||
           String(j.numero)===String(sj.numero)
         );
-        return { ...sj, points:sj.pts, tirs_reussis:sj.tirs_r, tirs_tentes:sj.tirs_t, tirs_3pts:sj.t3, lf_reussis:sj.lf_r, lf_tentes:sj.lf_t, temps_jeu:sj.tps, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
+        return { ...sj, points:sj.pts, tirs_reussis:(sj.int2||0)+(sj.ext2||0), tirs_tentes:(sj.int2||0)+(sj.ext2||0), tirs_3pts:sj.t3||0, lf_reussis:sj.lf||0, lf_tentes:sj.lf||0, fautes:sj.fautes||0, temps_jeu:sj.tps||"", int2:sj.int2||0, ext2:sj.ext2||0, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
       });
       setStatsMatch(statsPreview);
     } catch(e) { alert(`Erreur d'analyse PDF: ${e.message}`); }
@@ -826,7 +826,7 @@ Réponds avec exactement ce format JSON :
           <div style={{overflowX:"auto",marginBottom:16}}>
             <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
-                {["#","Joueuse","T","Pts","Tirs","3pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+                {["#","Joueuse","T","Pts","2Int","2Ext","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
               <tbody>{statsMatch.map((s,i)=>{
                 const j = joueuses.find(x=>x.id===s.joueuse_id);
@@ -836,10 +836,11 @@ Réponds avec exactement ce format JSON :
                   <td style={{padding:"6px 8px",fontFamily:"Oswald",fontWeight:700,color:"var(--court)"}}>{num}</td>
                   <td style={{padding:"6px 8px",fontWeight:s.titulaire?600:400}}>{nom}</td>
                   <td style={{padding:"6px 8px",color:"var(--accent)"}}>{s.titulaire?"★":""}</td>
-                  <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||s.pts||0}</td>
-                  <td style={{padding:"6px 8px"}}>{s.tirs_reussis||s.tirs_r||0}/{s.tirs_tentes||s.tirs_t||0}</td>
+                  <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.int2||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.ext2||0}</td>
                   <td style={{padding:"6px 8px"}}>{s.tirs_3pts||s.t3||0}</td>
-                  <td style={{padding:"6px 8px"}}>{s.lf_reussis||s.lf_r||0}/{s.lf_tentes||s.lf_t||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.lf_reussis||s.lf||0}</td>
                   <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
                 </tr>;
               })}</tbody>
@@ -853,15 +854,17 @@ Réponds avec exactement ce format JSON :
           <div style={{overflowX:"auto",marginBottom:16}}>
             <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
-                {["Joueuse","Pts","Tirs","3pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+                {["#","Joueuse","Pts","2Int","2Ext","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
               <tbody>{showDetail.stats_adversaires.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)33"}}>
-                <td style={{padding:"6px 8px"}}>{s.prenom||""} {s.nom||""} {s.numero?`#${s.numero}`:""}</td>
+                <td style={{padding:"6px 8px",fontFamily:"Oswald",fontWeight:700,color:"var(--court)"}}>{s.numero||"–"}</td>
+                <td style={{padding:"6px 8px"}}>{s.prenom||""} {s.nom||""}</td>
                 <td style={{padding:"6px 8px",fontWeight:700,color:s.pts>0?"var(--red)":"var(--muted)"}}>{s.pts||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.tirs_r||0}/{s.tirs_t||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.int2||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.ext2||0}</td>
                 <td style={{padding:"6px 8px"}}>{s.t3||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.lf_r||0}/{s.lf_t||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.fautes||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.lf||0}</td>
+                <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
               </tr>)}</tbody>
             </table>
           </div>
