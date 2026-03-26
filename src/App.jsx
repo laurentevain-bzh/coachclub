@@ -645,6 +645,8 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
       setShowDetail(null);
     } catch(e) { alert(`Erreur: ${e.message}`); }
   };
+
+  const openDetail = async m => {
     const stats = await db.getStatsMatch(m.id);
     setStatsMatch(stats||[]);
     setShowDetail(m);
