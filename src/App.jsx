@@ -53,8 +53,8 @@ const db = {
   getEvalJoueuse: (jid, sid) => sb(`evaluations?joueuse_id=eq.${jid}&saison_id=eq.${sid}`).then(r => r?.[0] || null),
   createEval: e => sb(`evaluations`, { method: "POST", body: e }),
   updateEval: (id, d) => sb(`evaluations?id=eq.${id}`, { method: "PATCH", body: d }),
-  getMatches: sid => sb(`matches?saison_id=eq.${sid}&order=created_at.desc`),
-  getAllMatches: cid => sb(`matches?club_id=eq.${cid}&order=created_at.desc`),
+  getMatches: sid => sb(`matches?saison_id=eq.${sid}&order=date.desc`),
+  getAllMatches: cid => sb(`matches?club_id=eq.${cid}&order=date.desc`),
   createMatch: m => sb(`matches`, { method: "POST", body: m }),
   updateMatch: (id, d) => sb(`matches?id=eq.${id}`, { method: "PATCH", body: d }),
   getCalendrier: sid => sb(`calendrier?saison_id=eq.${sid}&order=date.asc`),
@@ -71,6 +71,24 @@ const db = {
   getPlansEntr: sid => sb(`plans_entrainement?saison_id=eq.${sid}&order=created_at.desc`),
   createPlanEntr: p => sb(`plans_entrainement`, { method: "POST", body: p }),
   deletePlanEntr: id => sb(`plans_entrainement?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
+  // STATS PAR MATCH
+  getStatsMatch: mid => sb(`stats_match_joueuse?match_id=eq.${mid}`),
+  getStatsSaison: sid => sb(`stats_match_joueuse?saison_id=eq.${sid}&order=created_at.asc`),
+  getStatsJoueuse: (jid, sid) => sb(`stats_match_joueuse?joueuse_id=eq.${jid}&saison_id=eq.${sid}&order=created_at.asc`),
+  createStatMatch: s => sb(`stats_match_joueuse`, { method: "POST", body: s, prefer: "return=minimal" }),
+  deleteStatsMatch: mid => sb(`stats_match_joueuse?match_id=eq.${mid}`, { method: "DELETE", prefer: "return=minimal" }),
+};
+
+/* ─── SUPABASE STORAGE ─── */
+const uploadPdfTirs = async (matchId, file) => {
+  const b64 = await toBase64(file);
+  const res = await fetch("/api/claude", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ service: "storage_upload", bucket: "positions-tirs", filename: `${matchId}.pdf`, fileBase64: b64, contentType: "application/pdf" }),
+  });
+  if (!res.ok) throw new Error(`Storage ${res.status}`);
+  const data = await res.json();
+  return data.url || null;
 };
 
 const getSession = () => { try { const s = localStorage.getItem("cc_sess"); return s ? JSON.parse(s) : null; } catch { return null; } };
@@ -456,21 +474,24 @@ function SaisonModal({ club, saisons, currentSaisonId, onSelect, onClose, onNewS
 }
 
 /* ─── JOUEUSES ─── */
-function JoueusesPage({ club, saison, joueuses, evals, reload }) {
+function JoueusesPage({ club, saison, joueuses, evals, reload, statsSaison }) {
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [tab, setTab] = useState("profil");
   const [form, setForm] = useState({});
   const [evalForm, setEvalForm] = useState({});
+  const [statsJoueuse, setStatsJoueuse] = useState([]);
   const [saving, setSaving] = useState(false);
 
   const blankEval = () => ({ poste:POSITIONS[0], notes:"", ...Object.fromEntries(SKILLS.map(k=>[k,3])) });
   const getEval = jid => evals.find(e => e.joueuse_id === jid);
 
-  const openNew = () => { setEditId(null); setForm({ numero:"", prenom:"", nom:"", date_naissance:"", notes_globales:"" }); setEvalForm(blankEval()); setTab("profil"); setShowModal(true); };
-  const openEdit = j => {
+  const openNew = () => { setEditId(null); setForm({ numero:"", prenom:"", nom:"", date_naissance:"", notes_globales:"" }); setEvalForm(blankEval()); setTab("profil"); setStatsJoueuse([]); setShowModal(true); };
+  const openEdit = async j => {
     const ev = getEval(j.id);
     const ef = ev ? { poste:ev.poste||POSITIONS[0], notes:ev.notes||"", ...Object.fromEntries(SKILLS.map((k,i)=>[k,ev[SKILL_DB[i]]||3])) } : blankEval();
+    const stats = await db.getStatsJoueuse(j.id, saison.id);
+    setStatsJoueuse(stats||[]);
     setEditId(j.id); setForm({...j}); setEvalForm(ef); setTab("profil"); setShowModal(true);
   };
 
@@ -491,6 +512,15 @@ function JoueusesPage({ club, saison, joueuses, evals, reload }) {
 
   const del = async id => { if (!confirm("Supprimer cette joueuse définitivement ?")) return; await db.deleteJoueuse(id); await reload(); };
 
+  // Stats rapides depuis statsSaison
+  const getQuickStats = jid => {
+    const jStats = (statsSaison||[]).filter(s=>s.joueuse_id===jid);
+    if (!jStats.length) return null;
+    const totalPts = jStats.reduce((a,s)=>a+s.points,0);
+    const totalF = jStats.reduce((a,s)=>a+s.fautes,0);
+    return { matchs: jStats.length, pts: totalPts, moy: (totalPts/jStats.length).toFixed(1), fautes: totalF };
+  };
+
   return <div>
     <div className="flex jc-sb items-c" style={{marginBottom:20}}>
       <h2 className="page-title" style={{margin:0}}>Effectif <span>({joueuses.length})</span></h2>
@@ -500,11 +530,19 @@ function JoueusesPage({ club, saison, joueuses, evals, reload }) {
     <div className="player-grid">
       {joueuses.map(j=>{
         const ev = getEval(j.id);
+        const qs = getQuickStats(j.id);
         return <div key={j.id} className="pcard" onClick={()=>openEdit(j)}>
           <div className="pnum">#{j.numero||"?"}</div>
           <div className="pname">{j.prenom} {j.nom}</div>
           <div className="ppos">{ev?.poste||"–"}</div>
           {ev ? SKILL_DB.map((k,i)=><SkillBar key={k} label={SKILLS[i]} value={ev[k]||3}/>) : <p className="muted" style={{fontSize:11,marginTop:8}}>Pas encore évalué cette saison</p>}
+          {qs && <div style={{marginTop:10,padding:"8px 0",borderTop:"1px solid var(--border)"}}>
+            <div style={{display:"flex",gap:12}}>
+              <div style={{textAlign:"center"}}><div style={{fontFamily:"Oswald",fontSize:18,fontWeight:700,color:"var(--accent)"}}>{qs.moy}</div><div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1}}>Moy pts</div></div>
+              <div style={{textAlign:"center"}}><div style={{fontFamily:"Oswald",fontSize:18,fontWeight:700,color:"var(--white)"}}>{qs.matchs}</div><div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1}}>Matchs</div></div>
+              <div style={{textAlign:"center"}}><div style={{fontFamily:"Oswald",fontSize:18,fontWeight:700,color:qs.fautes>qs.matchs*2?"var(--red)":"var(--white)"}}>{(qs.fautes/qs.matchs).toFixed(1)}</div><div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1}}>Moy F</div></div>
+            </div>
+          </div>}
           {j.notes_globales && <p style={{fontSize:11,color:"var(--muted)",marginTop:8,fontStyle:"italic",lineHeight:1.4}}>{j.notes_globales}</p>}
           <button className="btn btn-danger" style={{marginTop:10}} onClick={e=>{e.stopPropagation();del(j.id);}}>Supprimer</button>
         </div>;
@@ -516,7 +554,34 @@ function JoueusesPage({ club, saison, joueuses, evals, reload }) {
         <div className="tabs">
           <button className={`tab ${tab==="profil"?"active":""}`} onClick={()=>setTab("profil")}>👤 Profil permanent</button>
           <button className={`tab ${tab==="eval"?"active":""}`} onClick={()=>setTab("eval")}>⭐ Éval {saison.nom}</button>
+          {editId && <button className={`tab ${tab==="stats"?"active":""}`} onClick={()=>setTab("stats")}>📊 Stats saison</button>}
         </div>
+        {tab==="stats" && <>
+          {statsJoueuse.length===0 ? <p className="muted" style={{textAlign:"center",padding:20}}>Aucune stat enregistrée pour cette joueuse cette saison.</p> :
+          <>
+            <div className="flex gap2" style={{marginBottom:16,justifyContent:"center"}}>
+              {[["Matchs",statsJoueuse.length,"var(--white)"],["Total pts",statsJoueuse.reduce((a,s)=>a+s.points,0),"var(--accent)"],["Moy pts",(statsJoueuse.reduce((a,s)=>a+s.points,0)/statsJoueuse.length).toFixed(1),"var(--accent)"],["Total F",statsJoueuse.reduce((a,s)=>a+s.fautes,0),"var(--red)"]].map(([l,v,c])=>(
+                <div key={l} className="sbox" style={{flex:"0 0 auto",minWidth:70}}><div className="sval" style={{color:c,fontSize:22}}>{v}</div><div className="slbl">{l}</div></div>
+              ))}
+            </div>
+            <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
+                {["Match","Pts","Tirs","3pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{statsJoueuse.map((s,i)=>{
+                const m = matches?.find(m=>m.id===s.match_id);
+                return <tr key={i} style={{borderBottom:"1px solid var(--border)22"}}>
+                  <td style={{padding:"6px 8px",fontSize:11,color:"var(--muted)"}}>{m?`vs ${m.adversaire} ${m.date}`:s.match_id?.slice(0,8)}</td>
+                  <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points}</td>
+                  <td style={{padding:"6px 8px"}}>{s.tirs_reussis}/{s.tirs_tentes}</td>
+                  <td style={{padding:"6px 8px"}}>{s.tirs_3pts}</td>
+                  <td style={{padding:"6px 8px"}}>{s.lf_reussis}/{s.lf_tentes}</td>
+                  <td style={{padding:"6px 8px",color:s.fautes>=4?"var(--red)":"var(--white)"}}>{s.fautes}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </>}
+        </>}
         {tab==="profil" && <>
           <div className="grid2">
             <div className="field"><label>Prénom</label><input value={form.prenom||""} onChange={e=>setForm(f=>({...f,prenom:e.target.value}))} placeholder="Prénom"/></div>
@@ -548,7 +613,304 @@ function JoueusesPage({ club, saison, joueuses, evals, reload }) {
 }
 
 /* ─── MATCHS ─── */
-function MatchsPage({ club, saison, matches, reload }) {
+function MatchsPage({ club, saison, joueuses, matches, reload }) {
+  const [showModal, setShowModal] = useState(false);
+  const [showDetail, setShowDetail] = useState(null); // match en détail
+  const [editMatch, setEditMatch] = useState(null);
+  const [parsing, setParsing] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState({ feuille:"", score:"", tirs:"" });
+  const [pdfs, setPdfs] = useState({ feuille:null, score:null, tirs:null });
+  const [tirsPdfFile, setTirsPdfFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [statsMatch, setStatsMatch] = useState([]);
+  const fileRefs = { feuille: useRef(), score: useRef(), tirs: useRef() };
+  const emptyForm = () => ({ date:"", adversaire:"", score_nous:"", score_eux:"", defense_adverse:"", joueuses_cles:"", mon_attaque:"", ma_defense:"", attaque_adverse:"", defense_adverse_notes:"", stats_joueuses:[], stats_equipe:{}, progression_score:{}, pdf_tirs_url:"" });
+  const [form, setForm] = useState(emptyForm());
+
+  const openNew = () => { setEditMatch(null); setPdfs({ feuille:null, score:null, tirs:null }); setTirsPdfFile(null); setPdfStatus({ feuille:"", score:"", tirs:"" }); setForm(emptyForm()); setStatsMatch([]); setShowModal(true); };
+  const openEdit = m => {
+    setEditMatch(m);
+    setForm({ date:m.date||"", adversaire:m.adversaire||"", score_nous:m.score_nous||"", score_eux:m.score_eux||"", defense_adverse:m.defense_adverse||"", joueuses_cles:m.joueuses_cles||"", mon_attaque:m.mon_attaque||"", ma_defense:m.ma_defense||"", attaque_adverse:m.attaque_adverse||"", defense_adverse_notes:m.defense_adverse_notes||"", stats_joueuses:m.stats_joueuses||[], stats_equipe:m.stats_equipe||{}, progression_score:m.progression_score||{}, pdf_tirs_url:m.pdf_tirs_url||"" });
+    setPdfs({ feuille:null, score:null, tirs:null }); setTirsPdfFile(null); setPdfStatus({ feuille:"", score:"", tirs:"" });
+    db.getStatsMatch(m.id).then(s=>setStatsMatch(s||[]));
+    setShowModal(true);
+  };
+
+  const openDetail = async m => {
+    const stats = await db.getStatsMatch(m.id);
+    setStatsMatch(stats||[]);
+    setShowDetail(m);
+  };
+
+  const handlePdf = async (type, file) => {
+    if (!file || file.type !== "application/pdf") return;
+    setPdfStatus(s=>({...s,[type]:"Chargement..."}));
+    try {
+      const b64 = await toBase64(file);
+      setPdfs(p=>({...p,[type]:b64}));
+      if (type === "tirs") setTirsPdfFile(file);
+      setPdfStatus(s=>({...s,[type]:"✅"}));
+    } catch { setPdfStatus(s=>({...s,[type]:"Erreur"})); }
+  };
+
+  const analyze = async () => {
+    const available = [["feuille",pdfs.feuille],["score",pdfs.score]].filter(([,v])=>v);
+    if (!available.length && !pdfs.tirs) return;
+    setParsing(true);
+    try {
+      const allPdfs = Object.entries(pdfs).filter(([,v])=>v).map(([,v])=>v);
+      const txt = await askClaudeWithPDFs(allPdfs,
+        `Tu as des documents d'un match basket U15 féminin FFBB. Analyse-les tous et réponds UNIQUEMENT en JSON avec cette structure exacte:
+{
+  "adversaire": "",
+  "score_nous": 0,
+  "score_eux": 0,
+  "date": "YYYY-MM-DD",
+  "defense_type": "",
+  "stats_joueuses": [{"nom":"","prenom":"","numero":0,"titulaire":false,"points":0,"tirs_reussis":0,"tirs_tentes":0,"tirs_3pts":0,"lf_reussis":0,"lf_tentes":0,"fautes":0,"temps_jeu":""}],
+  "stats_equipe": {"points_banc":0,"avantage_max":0,"serie_max":0,"total_tirs_reussis":0,"total_tirs_tentes":0},
+  "progression_score": {"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0},
+  "mon_attaque": "analyse offensive",
+  "ma_defense": "analyse défensive",
+  "attaque_adverse": "comment l'adversaire a attaqué",
+  "defense_adverse": "leur défense et comment on y a répondu"
+}`);
+      const p = JSON.parse(txt.replace(/```json|```/g,"").trim());
+      setForm(f=>({
+        ...f,
+        adversaire: p.adversaire||f.adversaire,
+        score_nous: String(p.score_nous||f.score_nous),
+        score_eux: String(p.score_eux||f.score_eux),
+        date: p.date||f.date,
+        defense_adverse: p.defense_type||f.defense_adverse,
+        stats_joueuses: p.stats_joueuses||f.stats_joueuses,
+        stats_equipe: p.stats_equipe||f.stats_equipe,
+        progression_score: p.progression_score||f.progression_score,
+        mon_attaque: p.mon_attaque||f.mon_attaque,
+        ma_defense: p.ma_defense||f.ma_defense,
+        attaque_adverse: p.attaque_adverse||f.attaque_adverse,
+        defense_adverse_notes: p.defense_adverse||f.defense_adverse_notes,
+        joueuses_cles: p.stats_joueuses?.filter(j=>j.points>0).map(j=>`${j.nom}: ${j.points}pts`).join(", ")||f.joueuses_cles,
+      }));
+      // Pré-remplir les stats match en liant aux joueuses connues
+      const statsPreview = (p.stats_joueuses||[]).map(sj => {
+        const match = joueuses.find(j => j.nom.toLowerCase()===sj.nom?.toLowerCase() || j.prenom?.toLowerCase()===sj.prenom?.toLowerCase());
+        return { ...sj, joueuse_id: match?.id||null, joueuse_nom: match ? `${match.prenom} ${match.nom}` : `${sj.prenom||""} ${sj.nom||""}`.trim() };
+      });
+      setStatsMatch(statsPreview);
+    } catch(e) { alert(`Erreur d'analyse: ${e.message}`); }
+    setParsing(false);
+  };
+
+  const save = async () => {
+    if (!form.adversaire) return;
+    setSaving(true);
+    try {
+      let pdfTirsUrl = form.pdf_tirs_url;
+      const matchId = editMatch?.id || uid();
+      // Upload PDF tirs si nouveau
+      if (tirsPdfFile) {
+        pdfTirsUrl = await uploadPdfTirs(matchId, tirsPdfFile);
+      }
+      const payload = { club_id:club.id, saison_id:saison.id, date:form.date, adversaire:form.adversaire, score_nous:form.score_nous, score_eux:form.score_eux, defense_adverse:form.defense_adverse, joueuses_cles:form.joueuses_cles, mon_attaque:form.mon_attaque, ma_defense:form.ma_defense, attaque_adverse:form.attaque_adverse, defense_adverse_notes:form.defense_adverse_notes, stats_joueuses:form.stats_joueuses, stats_equipe:form.stats_equipe, progression_score:form.progression_score, pdf_tirs_url:pdfTirsUrl };
+      if (editMatch) { await db.updateMatch(editMatch.id, payload); }
+      else { await db.createMatch({ id:matchId, ...payload }); }
+      // Sauvegarder stats individuelles liées aux joueuses
+      if (statsMatch.length > 0) {
+        if (editMatch) await db.deleteStatsMatch(editMatch.id);
+        const mid = editMatch?.id || matchId;
+        for (const s of statsMatch) {
+          if (s.joueuse_id) {
+            await db.createStatMatch({ id:uid(), match_id:mid, joueuse_id:s.joueuse_id, saison_id:saison.id, club_id:club.id, points:s.points||0, tirs_reussis:s.tirs_reussis||0, tirs_tentes:s.tirs_tentes||0, tirs_3pts:s.tirs_3pts||0, lf_reussis:s.lf_reussis||0, lf_tentes:s.lf_tentes||0, fautes:s.fautes||0, temps_jeu:s.temps_jeu||"", titulaire:s.titulaire||false });
+          }
+        }
+      }
+      await reload(); setShowModal(false);
+    } catch(e) { alert(`Erreur: ${e.message}`); }
+    setSaving(false);
+  };
+
+  const wins = matches.filter(m=>parseInt(m.score_nous)>parseInt(m.score_eux)).length;
+  const totalPts = matches.reduce((a,m)=>a+parseInt(m.score_nous||0),0);
+  const avgPts = matches.length ? Math.round(totalPts/matches.length) : 0;
+
+  return <div>
+    <div className="flex jc-sb items-c" style={{marginBottom:20}}>
+      <h2 className="page-title" style={{margin:0}}>Matchs <span>({matches.length})</span></h2>
+      <button className="btn btn-accent" onClick={openNew}>+ Match</button>
+    </div>
+    {matches.length>0 && <div className="stat-strip">
+      <div className="sbox"><div className="sval">{matches.length}</div><div className="slbl">Joués</div></div>
+      <div className="sbox"><div className="sval" style={{color:"var(--green)"}}>{wins}</div><div className="slbl">Victoires</div></div>
+      <div className="sbox"><div className="sval" style={{color:"var(--red)"}}>{matches.length-wins}</div><div className="slbl">Défaites</div></div>
+      <div className="sbox"><div className="sval">{avgPts}</div><div className="slbl">Moy. pts</div></div>
+    </div>}
+    {matches.length===0 && <div className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:12}}>📋</div><p className="muted">Aucun match cette saison.</p></div>}
+    {matches.map(m=>{
+      const w=parseInt(m.score_nous)>parseInt(m.score_eux);
+      const hasStats = m.stats_joueuses?.length > 0;
+      return <div key={m.id} className="mitem">
+        <span className="mdate" style={{cursor:"pointer"}} onClick={()=>openDetail(m)}>{m.date||"–"}</span>
+        <div style={{flex:1,cursor:"pointer"}} onClick={()=>openDetail(m)}>
+          <div className="mvs">vs {m.adversaire}</div>
+          <div className="flex gap2" style={{marginTop:4,flexWrap:"wrap"}}>
+            {m.defense_adverse && <span className="badge b-yellow">{m.defense_adverse}</span>}
+            {hasStats && <span className="badge b-blue">📊 Stats</span>}
+            {m.pdf_tirs_url && <span className="badge b-green">🎯 PDF</span>}
+          </div>
+        </div>
+        <div className={`mscore ${w?"w":"l"}`}>{m.score_nous}–{m.score_eux}</div>
+        <span className={`badge ${w?"b-green":"b-red"}`}>{w?"V":"D"}</span>
+        <button className="btn btn-ghost" style={{fontSize:10,padding:"3px 8px",marginLeft:4}} onClick={()=>openEdit(m)}>✏️</button>
+      </div>;
+    })}
+
+    {/* DETAIL MODAL */}
+    {showDetail && <div className="overlay" onClick={()=>setShowDetail(null)}>
+      <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:700}}>
+        <div className="modal-hdr">
+          <span className="modal-ttl">vs {showDetail.adversaire} — {showDetail.date}</span>
+          <button className="close" onClick={()=>setShowDetail(null)}>✕</button>
+        </div>
+        {/* Score + quarts */}
+        <div className="flex gap2 items-c" style={{marginBottom:16}}>
+          <div style={{fontFamily:"Oswald",fontSize:32,fontWeight:700,color:parseInt(showDetail.score_nous)>parseInt(showDetail.score_eux)?"var(--green)":"var(--red)"}}>{showDetail.score_nous}–{showDetail.score_eux}</div>
+          {showDetail.progression_score && Object.keys(showDetail.progression_score).length>0 && <div style={{display:"flex",gap:8,marginLeft:16}}>
+            {[1,2,3,4].map(q=><div key={q} style={{textAlign:"center",background:"var(--surface2)",padding:"6px 10px",borderRadius:2}}>
+              <div style={{fontSize:9,color:"var(--muted)",fontFamily:"Oswald",letterSpacing:1}}>QT{q}</div>
+              <div style={{fontSize:13,fontWeight:600}}>{showDetail.progression_score[`qt${q}_nous`]||0}–{showDetail.progression_score[`qt${q}_eux`]||0}</div>
+            </div>)}
+          </div>}
+        </div>
+        {/* Stats équipe */}
+        {showDetail.stats_equipe && Object.keys(showDetail.stats_equipe).length>0 && <div className="flex gap2" style={{marginBottom:16,flexWrap:"wrap"}}>
+          {showDetail.stats_equipe.avantage_max && <span className="badge b-yellow">Avantage max: {showDetail.stats_equipe.avantage_max}</span>}
+          {showDetail.stats_equipe.serie_max && <span className="badge b-blue">Série max: {showDetail.stats_equipe.serie_max}</span>}
+          {showDetail.stats_equipe.points_banc !== undefined && <span className="badge b-green">Pts banc: {showDetail.stats_equipe.points_banc}</span>}
+        </div>}
+        {/* Stats joueuses */}
+        {statsMatch.length>0 && <>
+          <hr className="divider"/>
+          <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>Stats joueuses</p>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
+                {["Joueuse","T","Pts","Tirs","3pts","LF","F"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{statsMatch.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)22"}}>
+                <td style={{padding:"6px 8px",fontWeight:500}}>{s.joueuse_nom||`Joueuse ${i+1}`}</td>
+                <td style={{padding:"6px 8px"}}>{s.titulaire?"✓":""}</td>
+                <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.tirs_reussis||0}/{s.tirs_tentes||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.tirs_3pts||0}</td>
+                <td style={{padding:"6px 8px"}}>{s.lf_reussis||0}/{s.lf_tentes||0}</td>
+                <td style={{padding:"6px 8px",color:s.fautes>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </>}
+        {/* PDF tirs */}
+        {showDetail.pdf_tirs_url && <>
+          <hr className="divider"/>
+          <a href={showDetail.pdf_tirs_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{width:"100%",justifyContent:"center",textDecoration:"none"}}>
+            🎯 Voir les positions de tirs (PDF)
+          </a>
+        </>}
+        {/* Résumé structuré */}
+        {(showDetail.mon_attaque||showDetail.ma_defense||showDetail.attaque_adverse||showDetail.defense_adverse_notes) && <>
+          <hr className="divider"/>
+          <div className="summary-grid">
+            {showDetail.mon_attaque && <div className="summary-block att"><div className="summary-block-title">⚡ Mon attaque</div><p style={{fontSize:13,lineHeight:1.6}}>{showDetail.mon_attaque}</p></div>}
+            {showDetail.ma_defense && <div className="summary-block def"><div className="summary-block-title">🛡️ Ma défense</div><p style={{fontSize:13,lineHeight:1.6}}>{showDetail.ma_defense}</p></div>}
+            {showDetail.attaque_adverse && <div className="summary-block adv-att"><div className="summary-block-title">⚔️ Attaque adverse</div><p style={{fontSize:13,lineHeight:1.6}}>{showDetail.attaque_adverse}</p></div>}
+            {showDetail.defense_adverse_notes && <div className="summary-block adv-def"><div className="summary-block-title">🔒 Défense adverse</div><p style={{fontSize:13,lineHeight:1.6}}>{showDetail.defense_adverse_notes}</p></div>}
+          </div>
+        </>}
+        <div className="flex gap2 jc-end mt3">
+          <button className="btn btn-ghost" onClick={()=>{setShowDetail(null);openEdit(showDetail);}}>✏️ Modifier</button>
+          <button className="btn btn-ghost" onClick={()=>setShowDetail(null)}>Fermer</button>
+        </div>
+      </div>
+    </div>}
+
+    {/* EDIT/CREATE MODAL */}
+    {showModal && <div className="overlay" onClick={()=>setShowModal(false)}>
+      <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:680}}>
+        <div className="modal-hdr"><span className="modal-ttl">{editMatch?"Modifier":"Nouveau match"}</span><button className="close" onClick={()=>setShowModal(false)}>✕</button></div>
+
+        {/* PDF Upload */}
+        <div style={{marginBottom:16}}>
+          <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>📄 Documents PDF FFBB</p>
+          <div className="grid3">
+            {[["feuille","📋","Feuille match"],["score","📊","Fiche score"],["tirs","🎯","Positions tirs"]].map(([type,icon,label])=>(
+              <div key={type}>
+                <div className={`dropzone ${pdfs[type]?"drag":""}`} style={{padding:14}} onClick={()=>fileRefs[type].current?.click()} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();handlePdf(type,e.dataTransfer.files[0]);}}>
+                  <input ref={fileRefs[type]} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>handlePdf(type,e.target.files[0])}/>
+                  <div className="dropzone-icon" style={{fontSize:18}}>{icon}</div>
+                  <div className="dropzone-txt" style={{fontSize:11}}>{pdfStatus[type]||(type==="tirs"&&editMatch?.pdf_tirs_url?"✅ Déjà uploadé":<strong>{label}</strong>)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {(pdfs.feuille||pdfs.score) && <button className="btn btn-accent" style={{width:"100%",marginTop:4}} onClick={analyze} disabled={parsing}>{parsing?"⏳ Analyse en cours...":"🧠 Analyser les PDFs"}</button>}
+          <p style={{fontSize:11,color:"var(--muted)",marginTop:6}}>💡 La feuille + fiche score extraient les stats. Le PDF tirs est stocké et consultable.</p>
+        </div>
+
+        <div className="grid2">
+          <div className="field"><label>Date</label><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></div>
+          <div className="field"><label>Adversaire</label><input value={form.adversaire} onChange={e=>setForm(f=>({...f,adversaire:e.target.value}))} placeholder="Nom équipe"/></div>
+        </div>
+        <div className="grid2">
+          <div className="field"><label>Notre score</label><input type="number" value={form.score_nous} onChange={e=>setForm(f=>({...f,score_nous:e.target.value}))}/></div>
+          <div className="field"><label>Score adverse</label><input type="number" value={form.score_eux} onChange={e=>setForm(f=>({...f,score_eux:e.target.value}))}/></div>
+        </div>
+        <div className="field"><label>Type défense adverse</label><input value={form.defense_adverse} onChange={e=>setForm(f=>({...f,defense_adverse:e.target.value}))} placeholder="Zone 2-3, H/H, Press..."/></div>
+
+        {/* Stats joueuses extraites */}
+        {statsMatch.length>0 && <>
+          <hr className="divider"/>
+          <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>📊 Stats joueuses extraites</p>
+          <div style={{overflowX:"auto",marginBottom:12}}>
+            <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
+                {["Nom extrait","Liée à","Pts","Tirs","3pts","LF","F"].map(h=><th key={h} style={{padding:"4px 6px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{statsMatch.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)22"}}>
+                <td style={{padding:"4px 6px",fontSize:11}}>{s.joueuse_nom}</td>
+                <td style={{padding:"4px 6px"}}>
+                  <select style={{background:"var(--bg)",border:"1px solid var(--border)",color:"var(--white)",fontSize:11,padding:"2px 4px",borderRadius:2}} value={s.joueuse_id||""} onChange={e=>setStatsMatch(sm=>sm.map((x,j)=>j===i?{...x,joueuse_id:e.target.value||null}:x))}>
+                    <option value="">–</option>
+                    {joueuses.map(j=><option key={j.id} value={j.id}>{j.prenom} {j.nom}</option>)}
+                  </select>
+                </td>
+                <td style={{padding:"4px 6px",fontWeight:700}}>{s.points||0}</td>
+                <td style={{padding:"4px 6px"}}>{s.tirs_reussis||0}/{s.tirs_tentes||0}</td>
+                <td style={{padding:"4px 6px"}}>{s.tirs_3pts||0}</td>
+                <td style={{padding:"4px 6px"}}>{s.lf_reussis||0}/{s.lf_tentes||0}</td>
+                <td style={{padding:"4px 6px"}}>{s.fautes||0}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </>}
+
+        <hr className="divider"/>
+        <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:12}}>Résumé structuré</p>
+        <div className="summary-grid">
+          <div className="summary-block att"><div className="summary-block-title">⚡ Mon attaque</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:60,fontFamily:"DM Sans"}} value={form.mon_attaque} onChange={e=>setForm(f=>({...f,mon_attaque:e.target.value}))} placeholder="Ce qui a marché offensivement..."/></div>
+          <div className="summary-block def"><div className="summary-block-title">🛡️ Ma défense</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:60,fontFamily:"DM Sans"}} value={form.ma_defense} onChange={e=>setForm(f=>({...f,ma_defense:e.target.value}))} placeholder="Notre organisation défensive..."/></div>
+          <div className="summary-block adv-att"><div className="summary-block-title">⚔️ Attaque adverse</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:60,fontFamily:"DM Sans"}} value={form.attaque_adverse} onChange={e=>setForm(f=>({...f,attaque_adverse:e.target.value}))} placeholder="Comment ils ont attaqué..."/></div>
+          <div className="summary-block adv-def"><div className="summary-block-title">🔒 Défense adverse</div><textarea style={{background:"transparent",border:"none",outline:"none",width:"100%",color:"var(--white)",fontSize:13,resize:"vertical",minHeight:60,fontFamily:"DM Sans"}} value={form.defense_adverse_notes} onChange={e=>setForm(f=>({...f,defense_adverse_notes:e.target.value}))} placeholder="Leur défense, comment on y a répondu..."/></div>
+        </div>
+        <div className="flex gap2 jc-end mt3">
+          <button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Annuler</button>
+          <button className="btn btn-accent" onClick={save} disabled={saving}>{saving?"⏳ Sauvegarde...":"Enregistrer"}</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
+
   const [showModal, setShowModal] = useState(false);
   const [editMatch, setEditMatch] = useState(null);
   const [parsing, setParsing] = useState(false);
@@ -759,20 +1121,35 @@ function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier, init
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [plansExistants, setPlansExistants] = useState([]);
+  const [selectedJoueuses, setSelectedJoueuses] = useState(() => new Set(joueuses.map(j=>j.id)));
+  const [renforts, setRenforts] = useState(""); // joueuses extérieures (texte libre)
+  const [selectedMatches, setSelectedMatches] = useState(() => new Set(matches.slice(0,6).map(m=>m.id)));
+  const [showSelections, setShowSelections] = useState(false);
   const calEvent = initContext?.calendrierEvent || null;
 
   useEffect(()=>{ loadPlans(); },[saison.id]);
+  useEffect(()=>{ setSelectedJoueuses(new Set(joueuses.map(j=>j.id))); },[joueuses]);
+  useEffect(()=>{ setSelectedMatches(new Set(matches.slice(0,6).map(m=>m.id))); },[matches]);
+
   const loadPlans = async () => setPlansExistants((await db.getPlansMatch(saison.id))||[]);
+  const toggleJ = id => setSelectedJoueuses(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  const toggleM = id => setSelectedMatches(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
 
   const generate = async () => {
     if (!adversaire) return;
     setLoading(true); setOutput(""); setSaved(false);
-    const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
-    const m = matches.slice(0,6).map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux}\nAtt: ${ma.mon_attaque?.slice(0,60)||"–"} | Déf: ${ma.ma_defense?.slice(0,60)||"–"}`).join("\n\n");
-    const prev = matches.find(ma=>ma.adversaire?.toLowerCase()===adversaire.toLowerCase());
+
+    const joueusesDispo = joueuses.filter(j=>selectedJoueuses.has(j.id));
+    const p = joueusesDispo.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
+    const renfLine = renforts.trim() ? `\nRENFORTS (extérieurs): ${renforts}` : "";
+
+    const matchesSel = matches.filter(m=>selectedMatches.has(m.id));
+    const m = matchesSel.map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux}\nAtt: ${ma.mon_attaque?.slice(0,80)||"–"} | Déf: ${ma.ma_defense?.slice(0,80)||"–"}\nAdv att: ${ma.attaque_adverse?.slice(0,60)||"–"} | Adv déf: ${ma.defense_adverse_notes?.slice(0,60)||"–"}`).join("\n\n");
+
+    const prev = matchesSel.find(ma=>ma.adversaire?.toLowerCase()===adversaire.toLowerCase());
     const fmt = mode==="court"?"Format COURT: 1 page max, bullet points opérationnels.":"Format DÉTAILLÉ: analyse tactique complète, justifie chaque choix.";
     try {
-      const prompt = `Tu es assistant coach basket expert.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""} | ${saison.seances_par_semaine} séances/semaine\nEFFECTIF:\n${p||"Non renseigné"}\nHISTORIQUE:\n${m||"Aucun"}\n${prev?`\nMATCH PRÉCÉDENT vs ${adversaire} (${prev.date}): ${prev.score_nous}-${prev.score_eux}\nNotre attaque: ${prev.mon_attaque||"–"}\nNotre défense: ${prev.ma_defense||"–"}\nLeur attaque: ${prev.attaque_adverse||"–"}\nLeur défense: ${prev.defense_adverse_notes||"–"}`:""}${calEvent?`\nMATCH: ${calEvent.date} ${calEvent.heure} vs ${adversaire} (${calEvent.lieu})`:""}${next&&!calEvent?`\nPROCHAIN MATCH: ${next.date} ${next.heure} vs ${adversaire}`:""}\n\nADVERSAIRE: ${adversaire}\nINFOS: ${infos||"Rien"}\n\nGénère un plan de match. ${fmt}\nCouvre: défense recommandée, système offensif, matchups clés, travail à faire sur les ${saison.seances_par_semaine} séances avant le match, message équipe.`;
+      const prompt = `Tu es assistant coach basket expert.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""} | ${saison.seances_par_semaine} séances/semaine\n\nJOUEUSES DISPONIBLES POUR CE MATCH:\n${p||"Non renseigné"}${renfLine}\n\nHISTORIQUE SÉLECTIONNÉ (${matchesSel.length} matchs):\n${m||"Aucun"}\n${prev?`\nMATCH PRÉCÉDENT vs ${adversaire} (${prev.date}): ${prev.score_nous}-${prev.score_eux}\nNotre attaque: ${prev.mon_attaque||"–"}\nNotre défense: ${prev.ma_defense||"–"}\nLeur attaque: ${prev.attaque_adverse||"–"}\nLeur défense: ${prev.defense_adverse_notes||"–"}`:""}${calEvent?`\nMATCH: ${calEvent.date} ${calEvent.heure} vs ${adversaire} (${calEvent.lieu})`:""}${next&&!calEvent?`\nPROCHAIN MATCH: ${next.date} ${next.heure} vs ${adversaire}`:""}\n\nADVERSAIRE: ${adversaire}\nINFOS: ${infos||"Rien"}\n\nGénère un plan de match. ${fmt}\nCouvre: défense recommandée, système offensif, matchups clés, utilisation des renforts si applicable, travail à faire sur les ${saison.seances_par_semaine} séances avant le match, message équipe.`;
       setOutput(await askClaude(null, [{role:"user",content:prompt}]));
     } catch(e) { setOutput(`Erreur: ${e.message}`); }
     setLoading(false);
@@ -804,9 +1181,36 @@ function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier, init
       <div className="card">
         <div className="card-title">⚙️ Paramètres</div>
         <div className="field"><label>Adversaire *</label><input value={adversaire} onChange={e=>setAdversaire(e.target.value)} placeholder="Nom équipe adverse"/></div>
-        <div className="field"><label>Ce que tu sais d'eux</label><textarea value={infos} onChange={e=>setInfos(e.target.value)} rows={3} placeholder="Défense, joueuses dangereuses, résultats récents..."/></div>
+        <div className="field"><label>Ce que tu sais d'eux</label><textarea value={infos} onChange={e=>setInfos(e.target.value)} rows={2} placeholder="Défense, joueuses dangereuses, résultats récents..."/></div>
         <div className="field"><label>Format</label><div className="flex gap2">{["court","long"].map(v=><button key={v} className={`btn ${mode===v?"btn-accent":"btn-ghost"}`} onClick={()=>setMode(v)}>{v==="court"?"Court":"Détaillé"}</button>)}</div></div>
-        <p className="muted mt2">{joueuses.length} joueuses · {matches.length} matchs · {saison.seances_par_semaine} séances/sem</p>
+
+        {/* SÉLECTIONS */}
+        <button className="btn btn-ghost" style={{width:"100%",marginTop:8,fontSize:11}} onClick={()=>setShowSelections(s=>!s)}>
+          {showSelections?"▲":"▼"} Joueuses disponibles & historique ({selectedJoueuses.size}/{joueuses.length} · {selectedMatches.size} matchs)
+        </button>
+        {showSelections && <div style={{marginTop:12}}>
+          <p style={{fontFamily:"Oswald",fontSize:10,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:8}}>👥 Joueuses disponibles</p>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+            {joueuses.map(j=><button key={j.id} className={`btn ${selectedJoueuses.has(j.id)?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"4px 10px"}} onClick={()=>toggleJ(j.id)}>
+              #{j.numero} {j.prenom}
+            </button>)}
+          </div>
+          <div className="field">
+            <label>Renforts extérieurs (non dans l'effectif)</label>
+            <input value={renforts} onChange={e=>setRenforts(e.target.value)} placeholder="Ex: Julie (pivot, U18A) — forte en rebond"/>
+          </div>
+          <p style={{fontFamily:"Oswald",fontSize:10,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:8}}>📋 Matchs de référence</p>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {matches.map(m=>{
+              const w=parseInt(m.score_nous)>parseInt(m.score_eux);
+              return <button key={m.id} className={`btn ${selectedMatches.has(m.id)?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"5px 10px",justifyContent:"flex-start",gap:8}} onClick={()=>toggleM(m.id)}>
+                <span>{m.date}</span><span>vs {m.adversaire}</span>
+                <span className={`badge ${w?"b-green":"b-red"}`} style={{marginLeft:"auto"}}>{m.score_nous}-{m.score_eux}</span>
+              </button>;
+            })}
+          </div>
+        </div>}
+
         <button className="btn btn-accent" style={{width:"100%",marginTop:14}} onClick={generate} disabled={loading||!adversaire}>{loading?"⏳ Génération...":"🎯 Générer le plan"}</button>
       </div>
       <div className="card">
@@ -840,7 +1244,7 @@ function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier, init
 }
 
 /* ─── TRAINING ─── */
-function TrainingPage({ club, saison, joueuses, evals, calendrier, initContext }) {
+function TrainingPage({ club, saison, joueuses, evals, calendrier, matches, initContext }) {
   const today = new Date().toISOString().split("T")[0];
   const next = calendrier.find(e=>e.type==="match"&&e.date>=today);
   const calEvent = initContext?.calendrierEvent || null;
@@ -852,30 +1256,39 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, initContext }
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [plansExistants, setPlansExistants] = useState([]);
+  const [selectedJoueuses, setSelectedJoueuses] = useState(() => new Set(joueuses.map(j=>j.id)));
+  const [renforts, setRenforts] = useState("");
+  const [selectedMatches, setSelectedMatches] = useState(() => new Set((matches||[]).slice(0,4).map(m=>m.id)));
+  const [showSelections, setShowSelections] = useState(false);
 
   useEffect(()=>{ loadPlans(); },[saison.id]);
+  useEffect(()=>{ setSelectedJoueuses(new Set(joueuses.map(j=>j.id))); },[joueuses]);
+  useEffect(()=>{ setSelectedMatches(new Set((matches||[]).slice(0,4).map(m=>m.id))); },[matches]);
+
   const loadPlans = async () => setPlansExistants((await db.getPlansEntr(saison.id))||[]);
+  const toggleJ = id => setSelectedJoueuses(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  const toggleM = id => setSelectedMatches(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
 
   const generate = async () => {
     setLoading(true); setOutput(""); setSaved(false);
-    const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} (${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3}. ${ev?.notes||j.notes_globales||""}`; }).join("\n");
+    const joueusesDispo = joueuses.filter(j=>selectedJoueuses.has(j.id));
+    const p = joueusesDispo.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} (${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3}. ${ev?.notes||j.notes_globales||""}`; }).join("\n");
+    const renfLine = renforts.trim() ? `\nRENFORTS: ${renforts}` : "";
+    const matchesSel = (matches||[]).filter(m=>selectedMatches.has(m.id));
+    const mCtx = matchesSel.length ? `\nHISTORIQUE SÉLECTIONNÉ:\n${matchesSel.map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux} | ${ma.mon_attaque?.slice(0,60)||"–"}`).join("\n")}` : "";
     try {
-      const prompt = `Tu es assistant coach basket. Plan d'entraînement adapté.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""}\nEFFECTIF:\n${p||"Non renseigné"}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n${next?`PROCHAIN MATCH: vs ${next.adversaire} le ${next.date} (${nbEntr} entraînement${nbEntr>1?"s":""} disponible${nbEntr>1?"s":""})`:"Aucun match imminent — travail de fond possible"}\n${calEvent?`CET ENTRAÎNEMENT est le ${calEvent.date} ${calEvent.heure}`:""}.\n\nFormat: Échauffement → Exercices techniques (durée + consignes) → Situation de jeu → Retour au calme. Très opérationnel, adapté au niveau.`;
+      const prompt = `Tu es assistant coach basket. Plan d'entraînement adapté.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""}\nJOUEUSES PRÉSENTES:\n${p||"Non renseigné"}${renfLine}${mCtx}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n${next?`PROCHAIN MATCH: vs ${next.adversaire} le ${next.date} (${nbEntr} entraînement${nbEntr>1?"s":""} disponible${nbEntr>1?"s":""})`:"Aucun match imminent — travail de fond possible"}\n${calEvent?`CET ENTRAÎNEMENT est le ${calEvent.date} ${calEvent.heure}`:""}\n\nFormat: Échauffement → Exercices techniques (durée + consignes) → Situation de jeu → Retour au calme. Très opérationnel, adapté au niveau.`;
       setOutput(await askClaude(null, [{role:"user",content:prompt}]));
     } catch(e) { setOutput(`Erreur: ${e.message}`); }
     setLoading(false);
   };
 
   const savePlan = async () => {
-    if (!output) return;
-    setSaving(true);
-    try {
-      await db.createPlanEntr({ id:uid(), club_id:club.id, saison_id:saison.id, calendrier_id:calEvent?.id||null, focus:focus||"Général", duree, contenu:output });
-      await loadPlans(); setSaved(true);
-    } catch(e) { alert(e.message); }
+    if (!output) return; setSaving(true);
+    try { await db.createPlanEntr({ id:uid(), club_id:club.id, saison_id:saison.id, calendrier_id:calEvent?.id||null, focus:focus||"Général", duree, contenu:output }); await loadPlans(); setSaved(true); }
+    catch(e) { alert(e.message); }
     setSaving(false);
   };
-
   const delPlan = async id => { await db.deletePlanEntr(id); await loadPlans(); };
 
   return <div>
@@ -893,6 +1306,32 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, initContext }
         <div className="card-title">⚙️ Paramètres</div>
         <div className="field"><label>Focus de séance</label><input value={focus} onChange={e=>setFocus(e.target.value)} placeholder="Ex: Défense zone, tirs transition, PNR..."/></div>
         <div className="field"><label>Durée</label><select value={duree} onChange={e=>setDuree(e.target.value)}>{["60","75","90","105","120"].map(d=><option key={d} value={d}>{d} min</option>)}</select></div>
+
+        <button className="btn btn-ghost" style={{width:"100%",marginTop:8,fontSize:11}} onClick={()=>setShowSelections(s=>!s)}>
+          {showSelections?"▲":"▼"} Joueuses présentes & historique ({selectedJoueuses.size}/{joueuses.length})
+        </button>
+        {showSelections && <div style={{marginTop:12}}>
+          <p style={{fontFamily:"Oswald",fontSize:10,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:8}}>👥 Joueuses présentes</p>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+            {joueuses.map(j=><button key={j.id} className={`btn ${selectedJoueuses.has(j.id)?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"4px 10px"}} onClick={()=>toggleJ(j.id)}>
+              #{j.numero} {j.prenom}
+            </button>)}
+          </div>
+          <div className="field"><label>Renforts extérieurs</label><input value={renforts} onChange={e=>setRenforts(e.target.value)} placeholder="Ex: Julie (pivot, U18A)"/></div>
+          {(matches||[]).length>0 && <>
+            <p style={{fontFamily:"Oswald",fontSize:10,letterSpacing:1.5,textTransform:"uppercase",color:"var(--muted)",marginBottom:8}}>📋 Matchs de référence</p>
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              {(matches||[]).map(m=>{
+                const w=parseInt(m.score_nous)>parseInt(m.score_eux);
+                return <button key={m.id} className={`btn ${selectedMatches.has(m.id)?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"5px 10px",justifyContent:"flex-start",gap:8}} onClick={()=>toggleM(m.id)}>
+                  <span>{m.date}</span><span>vs {m.adversaire}</span>
+                  <span className={`badge ${w?"b-green":"b-red"}`} style={{marginLeft:"auto"}}>{m.score_nous}-{m.score_eux}</span>
+                </button>;
+              })}
+            </div>
+          </>}
+        </div>}
+
         <button className="btn btn-accent" style={{width:"100%",marginTop:14}} onClick={generate} disabled={loading}>{loading?"⏳...":"⚡ Générer l'entraînement"}</button>
       </div>
       <div className="card">
@@ -911,10 +1350,7 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, initContext }
       <h3 style={{fontFamily:"Oswald",fontSize:16,letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>Plans sauvegardés <span style={{color:"var(--accent)"}}>({plansExistants.length})</span></h3>
       {plansExistants.map(p=><div key={p.id} className="card" style={{marginBottom:10}}>
         <div className="flex jc-sb items-c" style={{marginBottom:8}}>
-          <div>
-            <span style={{fontWeight:600}}>{p.focus}</span>
-            <span className="muted" style={{marginLeft:8,fontSize:12}}>{p.created_at?.slice(0,10)} · {p.duree}min</span>
-          </div>
+          <div><span style={{fontWeight:600}}>{p.focus}</span><span className="muted" style={{marginLeft:8,fontSize:12}}>{p.created_at?.slice(0,10)} · {p.duree}min</span></div>
           <button className="btn btn-danger" style={{padding:"3px 10px"}} onClick={()=>delPlan(p.id)}>✕</button>
         </div>
         <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.6,whiteSpace:"pre-wrap",maxHeight:200,overflow:"hidden",maskImage:"linear-gradient(to bottom, black 60%, transparent 100%)"}}>{p.contenu}</div>
@@ -1074,10 +1510,10 @@ export default function App() {
         <main className="content">
           {page==="sparring" && <SparringPage club={club} saison={saison} joueuses={joueuses} evals={evals} matches={matches} chatHistory={chatHistory} reloadChat={reloadChat} coachName={session.coachName} allMatches={allMatches}/>}
           {page==="gameplan" && <GamePlanPage club={club} saison={saison} joueuses={joueuses} evals={evals} matches={matches} calendrier={calendrier} initContext={navCtx}/>}
-          {page==="training" && <TrainingPage club={club} saison={saison} joueuses={joueuses} evals={evals} calendrier={calendrier} initContext={navCtx}/>}
+          {page==="training" && <TrainingPage club={club} saison={saison} joueuses={joueuses} evals={evals} calendrier={calendrier} matches={matches} initContext={navCtx}/>}
           {page==="calendrier" && <CalendrierPage club={club} saison={saison} calendrier={calendrier} matches={matches} reload={reloadCal} onNavigate={navigate}/>}
-          {page==="joueuses" && <JoueusesPage club={club} saison={saison} joueuses={joueuses} evals={evals} reload={reloadJ}/>}
-          {page==="matchs" && <MatchsPage club={club} saison={saison} matches={matches} reload={reloadM}/>}
+          {page==="joueuses" && <JoueusesPage club={club} saison={saison} joueuses={joueuses} evals={evals} reload={reloadJ} statsSaison={statsSaison} matches={matches}/>}
+          {page==="matchs" && <MatchsPage club={club} saison={saison} joueuses={joueuses} matches={matches} reload={reloadM}/>}
         </main>
       </div>
       <nav className="bottom-nav"><div className="bottom-nav-inner">
