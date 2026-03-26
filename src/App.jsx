@@ -1024,8 +1024,8 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
           <button className="btn btn-accent" onClick={save} disabled={saving}>{saving?"...":"Enregistrer"}</button>
         </div>
       </div>
-    </div>};
-  </div>
+    </div>}
+  </div>;
 
 /* ─── CALENDRIER ─── */
 function CalendrierPage({ club, saison, calendrier, matches, reload, onNavigate }) {
