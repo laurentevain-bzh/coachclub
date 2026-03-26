@@ -1362,8 +1362,15 @@ export default function App() {
   };
 
   const loadSaisonData = async (clubId, saisonId) => {
-    const [j,ev,m,am,cal,ch,ss] = await Promise.all([db.getJoueuses(clubId), db.getEvals(saisonId), db.getMatches(saisonId), db.getAllMatches(clubId), db.getCalendrier(saisonId), db.getChat(saisonId), db.getStatsSaison(saisonId)]);
-    setJoueuses(j||[]); setEvals(ev||[]); setMatches(m||[]); setAllMatches(am||[]); setCalendrier(cal||[]); setChatHistory(ch||[]); setStatsSaison(ss||[]);
+    try {
+      const [j,ev,m,am,cal,ch] = await Promise.all([
+        db.getJoueuses(clubId), db.getEvals(saisonId), db.getMatches(saisonId),
+        db.getAllMatches(clubId), db.getCalendrier(saisonId), db.getChat(saisonId)
+      ]);
+      setJoueuses(j||[]); setEvals(ev||[]); setMatches(m||[]); setAllMatches(am||[]); setCalendrier(cal||[]); setChatHistory(ch||[]);
+      // Stats saison — optionnel, ne bloque pas si erreur
+      try { const ss = await db.getStatsSaison(saisonId); setStatsSaison(ss||[]); } catch { setStatsSaison([]); }
+    } catch(e) { console.error("loadSaisonData error:", e); }
   };
 
   const loadAll = async sess => {
