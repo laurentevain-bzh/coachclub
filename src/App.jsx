@@ -1027,6 +1027,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
     </div>}
   </div>;
 }
+
 /* ─── CALENDRIER ─── */
 function CalendrierPage({ club, saison, calendrier, matches, reload, onNavigate }) {
   const [showModal, setShowModal] = useState(false);
