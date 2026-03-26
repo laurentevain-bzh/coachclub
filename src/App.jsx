@@ -1026,7 +1026,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
       </div>
     </div>}
   </div>;
-
+}
 /* ─── CALENDRIER ─── */
 function CalendrierPage({ club, saison, calendrier, matches, reload, onNavigate }) {
   const [showModal, setShowModal] = useState(false);
@@ -1525,5 +1525,4 @@ export default function App() {
     </div>
     {showSaisonModal && <SaisonModal club={club} saisons={saisons} currentSaisonId={saison.id} onSelect={switchSaison} onClose={()=>setShowSaisonModal(false)} onNewSaison={async id=>{const ss=await db.getSaisons(club.id);setSaisons(ss);await switchSaison(id);}}/>}
   </>);
-}
 }
