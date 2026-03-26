@@ -1356,7 +1356,8 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, matches, init
         <button className="btn btn-ghost" style={{marginTop:8,fontSize:11}} onClick={()=>setOutput(p.contenu)}>Afficher en entier</button>
       </div>)}
     </div>}
-  </div>;
+  </div>
+    );
 }
 
 /* ─── SPARRING ─── */
