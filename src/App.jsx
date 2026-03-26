@@ -797,17 +797,23 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
           <div style={{overflowX:"auto",marginBottom:16}}>
             <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
-                {["Joueuse","T","Pts","Tirs","3pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+                {["#","Joueuse","T","Pts","Tirs","3pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
-              <tbody>{statsMatch.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)33",background:s.titulaire?"var(--accent-glow)":"transparent"}}>
-                <td style={{padding:"6px 8px",fontWeight:s.titulaire?600:400}}>{s.joueuse_nom||`#${s.numero||i+1}`}</td>
-                <td style={{padding:"6px 8px",color:"var(--accent)"}}>{s.titulaire?"★":""}</td>
-                <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||s.pts||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.tirs_reussis||s.tirs_r||0}/{s.tirs_tentes||s.tirs_t||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.tirs_3pts||s.t3||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.lf_reussis||s.lf_r||0}/{s.lf_tentes||s.lf_t||0}</td>
-                <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
-              </tr>)}</tbody>
+              <tbody>{statsMatch.map((s,i)=>{
+                const j = joueuses.find(x=>x.id===s.joueuse_id);
+                const nom = j ? `${j.prenom} ${j.nom}` : (s.joueuse_nom||"–");
+                const num = j?.numero || "–";
+                return <tr key={i} style={{borderBottom:"1px solid var(--border)33",background:s.titulaire?"var(--accent-glow)":"transparent"}}>
+                  <td style={{padding:"6px 8px",fontFamily:"Oswald",fontWeight:700,color:"var(--court)"}}>{num}</td>
+                  <td style={{padding:"6px 8px",fontWeight:s.titulaire?600:400}}>{nom}</td>
+                  <td style={{padding:"6px 8px",color:"var(--accent)"}}>{s.titulaire?"★":""}</td>
+                  <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||s.pts||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.tirs_reussis||s.tirs_r||0}/{s.tirs_tentes||s.tirs_t||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.tirs_3pts||s.t3||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.lf_reussis||s.lf_r||0}/{s.lf_tentes||s.lf_t||0}</td>
+                  <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
+                </tr>;
+              })}</tbody>
             </table>
           </div>
         </>}
@@ -1333,6 +1339,7 @@ export default function App() {
   const [allMatches, setAllMatches] = useState([]);
   const [calendrier, setCalendrier] = useState([]);
   const [chatHistory, setChatHistory] = useState([]);
+  const [statsSaison, setStatsSaison] = useState([]);
   const [ready, setReady] = useState(false);
   const [page, setPage] = useState("sparring");
   const [navCtx, setNavCtx] = useState(null);
@@ -1344,8 +1351,8 @@ export default function App() {
   };
 
   const loadSaisonData = async (clubId, saisonId) => {
-    const [j,ev,m,am,cal,ch] = await Promise.all([db.getJoueuses(clubId), db.getEvals(saisonId), db.getMatches(saisonId), db.getAllMatches(clubId), db.getCalendrier(saisonId), db.getChat(saisonId)]);
-    setJoueuses(j||[]); setEvals(ev||[]); setMatches(m||[]); setAllMatches(am||[]); setCalendrier(cal||[]); setChatHistory(ch||[]);
+    const [j,ev,m,am,cal,ch,ss] = await Promise.all([db.getJoueuses(clubId), db.getEvals(saisonId), db.getMatches(saisonId), db.getAllMatches(clubId), db.getCalendrier(saisonId), db.getChat(saisonId), db.getStatsSaison(saisonId)]);
+    setJoueuses(j||[]); setEvals(ev||[]); setMatches(m||[]); setAllMatches(am||[]); setCalendrier(cal||[]); setChatHistory(ch||[]); setStatsSaison(ss||[]);
   };
 
   const loadAll = async sess => {
