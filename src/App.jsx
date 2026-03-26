@@ -53,6 +53,7 @@ const db = {
   getEvalJoueuse: (jid, sid) => sb(`evaluations?joueuse_id=eq.${jid}&saison_id=eq.${sid}`).then(r => r?.[0] || null),
   createEval: e => sb(`evaluations`, { method: "POST", body: e }),
   updateEval: (id, d) => sb(`evaluations?id=eq.${id}`, { method: "PATCH", body: d }),
+  getMatches: sid => sb(`matches?saison_id=eq.${sid}&order=date.desc`),
   deleteMatch: id => sb(`matches?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
   getAllMatches: cid => sb(`matches?club_id=eq.${cid}&order=date.desc`),
   createMatch: m => sb(`matches`, { method: "POST", body: m }),
