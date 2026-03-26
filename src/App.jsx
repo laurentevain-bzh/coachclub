@@ -670,30 +670,48 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
     setParsing(true);
     try {
       const allPdfs = Object.entries(pdfs).filter(([,v])=>v).map(([,v])=>v);
-      // Prompt compact pour éviter la troncature JSON
-      const prompt = `Documents match basket U15 FFBB. Réponds UNIQUEMENT en JSON valide, sans texte autour:\n{"adversaire":"","score_nous":0,"score_eux":0,"date":"YYYY-MM-DD","defense_type":"","qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"points_banc":0,"avantage_max":0,"serie_max":0,"stats_locaux":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0,"tps":""}],"stats_visiteurs":[{"nom":"","prenom":"","numero":0,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0}],"mon_attaque":"","ma_defense":"","attaque_adverse":"","defense_adverse":""}`;
-      const txt = await askClaudeWithPDFs(allPdfs, prompt);
-      const clean = txt.replace(/```json|```/g,"").trim();
-      const p = JSON.parse(clean);
+
+      // PASSE 1 : extraction données chiffrées
+      const promptStats = `Tu analyses des documents officiels FFBB d'un match de basket U15 feminin.
+REGLE : L'equipe de l'utilisateur contient WASQUEHAL. L'adversaire est l'AUTRE equipe.
+Reponds UNIQUEMENT en JSON valide sans texte autour :
+{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"points_banc":0,"avantage_max":0,"serie_max":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"tirs_r":0,"tirs_t":0,"t3":0,"lf_r":0,"lf_t":0,"fautes":0}]}`;
+
+      const txt1 = await askClaudeWithPDFs(allPdfs, promptStats);
+      const p = JSON.parse(txt1.replace(/\`\`\`json|\`\`\`/g,"").trim());
+
+      // PASSE 2 : analyse narrative détaillée
+      const promptAnalyse = `Tu analyses ces documents FFBB d'un match de basket U15 feminin entre WASQUEHAL et ${p.adversaire||"l'adversaire"}.
+Score final : WASQUEHAL ${p.score_wasquehal} - ${p.score_adversaire} ${p.adversaire||""}.
+Rédige une analyse détaillée en 3-4 phrases pour chacun de ces 4 aspects :
+1. MON ATTAQUE (Wasquehal) : systèmes utilisés, joueuses en réussite, ce qui a fonctionné
+2. MA DEFENSE (Wasquehal) : organisation défensive, stops réussis, points faibles
+3. ATTAQUE ADVERSE : comment ils ont attaqué, joueuses dangereuses, systèmes utilisés
+4. DEFENSE ADVERSE : type de défense jouée, comment on y a répondu, ce qui a posé problème
+Réponds avec exactement ce format JSON :
+{"mon_attaque":"...","ma_defense":"...","attaque_adverse":"...","defense_adverse":"..."}`;
+
+      const txt2 = await askClaudeWithPDFs(allPdfs, promptAnalyse);
+      const a = JSON.parse(txt2.replace(/\`\`\`json|\`\`\`/g,"").trim());
+
       setForm(f=>({
         ...f,
         adversaire: p.adversaire||f.adversaire,
-        score_nous: String(p.score_nous||f.score_nous),
-        score_eux: String(p.score_eux||f.score_eux),
+        score_nous: String(p.score_wasquehal||f.score_nous),
+        score_eux: String(p.score_adversaire||f.score_eux),
         date: p.date||f.date,
-        defense_adverse: p.defense_type||f.defense_adverse,
-        stats_joueuses: p.stats_locaux||f.stats_joueuses,
+        defense_adverse: p.defense_type_adverse||f.defense_adverse,
+        stats_joueuses: p.stats_wasquehal||f.stats_joueuses,
         stats_equipe: { points_banc:p.points_banc||0, avantage_max:p.avantage_max||0, serie_max:p.serie_max||0 },
         progression_score: { qt1_nous:p.qt1_nous||0,qt1_eux:p.qt1_eux||0,qt2_nous:p.qt2_nous||0,qt2_eux:p.qt2_eux||0,qt3_nous:p.qt3_nous||0,qt3_eux:p.qt3_eux||0,qt4_nous:p.qt4_nous||0,qt4_eux:p.qt4_eux||0 },
-        mon_attaque: p.mon_attaque||f.mon_attaque,
-        ma_defense: p.ma_defense||f.ma_defense,
-        attaque_adverse: p.attaque_adverse||f.attaque_adverse,
-        defense_adverse_notes: p.defense_adverse||f.defense_adverse_notes,
-        joueuses_cles: (p.stats_visiteurs||[]).filter(j=>j.pts>0).map(j=>`${j.nom}: ${j.pts}pts`).join(", ")||f.joueuses_cles,
-        stats_adversaires: p.stats_visiteurs||[],
+        mon_attaque: a.mon_attaque||f.mon_attaque,
+        ma_defense: a.ma_defense||f.ma_defense,
+        attaque_adverse: a.attaque_adverse||f.attaque_adverse,
+        defense_adverse_notes: a.defense_adverse||f.defense_adverse_notes,
+        joueuses_cles: (p.stats_adversaire||[]).filter(j=>j.pts>0).sort((a,b)=>b.pts-a.pts).slice(0,3).map(j=>`${j.prenom||""} ${j.nom}: ${j.pts}pts`).join(", ")||f.joueuses_cles,
+        stats_adversaires: p.stats_adversaire||[],
       }));
-      // Lier les stats locaux aux joueuses du club
-      const statsPreview = (p.stats_locaux||[]).map(sj => {
+      const statsPreview = (p.stats_wasquehal||[]).map(sj => {
         const match = joueuses.find(j =>
           j.nom?.toLowerCase()===sj.nom?.toLowerCase() ||
           j.prenom?.toLowerCase()===sj.prenom?.toLowerCase() ||
@@ -702,7 +720,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
         return { ...sj, points:sj.pts, tirs_reussis:sj.tirs_r, tirs_tentes:sj.tirs_t, tirs_3pts:sj.t3, lf_reussis:sj.lf_r, lf_tentes:sj.lf_t, temps_jeu:sj.tps, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
       });
       setStatsMatch(statsPreview);
-    } catch(e) { alert(`Erreur d'analyse PDF: ${e.message}\n\nEssaie d'analyser un seul document à la fois si le problème persiste.`); }
+    } catch(e) { alert(`Erreur d'analyse PDF: ${e.message}`); }
     setParsing(false);
   };
 
