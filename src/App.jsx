@@ -1026,7 +1026,6 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
       </div>
     </div>}
   </div>;
-}
 
 /* ─── CALENDRIER ─── */
 function CalendrierPage({ club, saison, calendrier, matches, reload, onNavigate }) {
