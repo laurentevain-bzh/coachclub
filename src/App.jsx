@@ -685,11 +685,30 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
     try {
       const allPdfs = Object.entries(pdfs).filter(([,v])=>v).map(([,v])=>v);
 
-      // PASSE 1 : extraction données chiffrées
-      const promptStats = `Fiche de score FFBB basket U15. L'equipe WASQUEHAL (dans LOCAUX ou VISITEURS) = mon equipe. Reponds UNIQUEMENT en JSON valide sans texte autour : {"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"lf":0,"fautes":0}]}`;
+      // PASSE 1 : extraction données chiffrées - approche en 2 étapes
+      // Etape 1a : demander une transcription textuelle du tableau
+      const promptTranscription = `Transcris exactement le tableau des joueuses de la section WASQUEHAL (LOCAUX ou VISITEURS) de cette fiche FFBB. 
+Pour chaque joueuse, ecris une ligne : NOM | pts | tirs_total | t3 | int2 | ext2 | lf | fautes | tps | titulaire
+Puis transcris le tableau adversaire de la meme facon.
+Reponds uniquement avec ces lignes, rien d\'autre.`;
 
-      const txt1 = await askClaudeWithPDFs(allPdfs, promptStats);
-      const p = JSON.parse(txt1.replace(/\`\`\`json|\`\`\`/g,"").trim());
+      const transcription = await askClaudeWithPDFs(allPdfs, promptTranscription);
+
+      // Etape 1b : extraire le JSON depuis la transcription
+      const promptExtraction = `Voici la transcription d\'une fiche de match FFBB :
+
+${transcription}
+
+A partir de cette transcription, genere le JSON suivant. Le champ pts = colonne pts. t3 = colonne t3. lf = colonne lf. fautes = colonne fautes. Ignore la colonne tirs_total.
+Reponds UNIQUEMENT en JSON valide sans texte autour :
+{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"lf":0,"fautes":0}]}`;
+
+      const txt1 = await askClaudeWithPDFs(allPdfs, promptTranscription + "\n\n" + promptExtraction);
+      // Si la transcription marche, on fait l'extraction sur le texte
+      const transcriptionResult = await askClaudeWithPDFs(allPdfs, promptTranscription);
+      const extractionPrompt = promptExtraction.replace('${transcription}', transcriptionResult);
+      const txt1Final = await askClaude(null, [{role:"user", content: `Voici la transcription d'une fiche de match FFBB :\n\n${transcriptionResult}\n\nA partir de cette transcription, genere le JSON. pts = colonne pts. t3 = colonne t3. lf = colonne lf. fautes = colonne fautes. Ignore tirs_total.\nReponds UNIQUEMENT en JSON valide sans texte autour :\n{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"lf":0,"fautes":0}]}`}], 4000);
+      const p = JSON.parse(txt1Final.replace(/```json|```/g,"").trim());
 
       // PASSE 2 : analyse narrative détaillée
       const promptAnalyse = `Tu analyses ces documents FFBB d'un match de basket U15 feminin entre WASQUEHAL et ${p.adversaire||"l'adversaire"}.
