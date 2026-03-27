@@ -685,44 +685,26 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
     try {
       const allPdfs = Object.entries(pdfs).filter(([,v])=>v).map(([,v])=>v);
 
-      // PASSE 1 : extraction données chiffrées - approche en 2 étapes
-      // Etape 1a : demander une transcription textuelle du tableau
-      const promptTranscription = `Transcris exactement le tableau des joueuses de la section WASQUEHAL (LOCAUX ou VISITEURS) de cette fiche FFBB. 
-Pour chaque joueuse, ecris une ligne : NOM | pts | tirs_total | t3 | int2 | ext2 | lf | fautes | tps | titulaire
-Puis transcris le tableau adversaire de la meme facon.
-Reponds uniquement avec ces lignes, rien d\'autre.`;
+      // PASSE 1 : transcription du tableau (1 seul appel PDF)
+      const promptStats = `Fiche de score FFBB basket U15 feminin.
+L'equipe WASQUEHAL (dans LOCAUX ou VISITEURS) = mon equipe.
 
-      const transcription = await askClaudeWithPDFs(allPdfs, promptTranscription);
-
-      // Etape 1b : extraire le JSON depuis la transcription
-      const promptExtraction = `Voici la transcription d\'une fiche de match FFBB :
-
-${transcription}
-
-A partir de cette transcription, genere le JSON suivant. Le champ pts = colonne pts. t3 = colonne t3. lf = colonne lf. fautes = colonne fautes. Ignore la colonne tirs_total.
-Reponds UNIQUEMENT en JSON valide sans texte autour :
+Pour chaque joueuse WASQUEHAL, lis ces colonnes dans l'ordre : Nb Pts Marques | 3 Pts Reussis | LF Reussis | Ftes Com
+Reponds UNIQUEMENT en JSON valide :
 {"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"lf":0,"fautes":0}]}`;
 
-      const txt1 = await askClaudeWithPDFs(allPdfs, promptTranscription + "\n\n" + promptExtraction);
-      // Si la transcription marche, on fait l'extraction sur le texte
-      const transcriptionResult = await askClaudeWithPDFs(allPdfs, promptTranscription);
-      const extractionPrompt = promptExtraction.replace('${transcription}', transcriptionResult);
-      const txt1Final = await askClaude(null, [{role:"user", content: `Voici la transcription d'une fiche de match FFBB :\n\n${transcriptionResult}\n\nA partir de cette transcription, genere le JSON. pts = colonne pts. t3 = colonne t3. lf = colonne lf. fautes = colonne fautes. Ignore tirs_total.\nReponds UNIQUEMENT en JSON valide sans texte autour :\n{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"lf":0,"fautes":0}]}`}], 4000);
-      const p = JSON.parse(txt1Final.replace(/```json|```/g,"").trim());
+      const txt1 = await askClaudeWithPDFs(allPdfs, promptStats);
+      const p = JSON.parse(txt1.replace(/```json|```/g,"").trim());
 
-      // PASSE 2 : analyse narrative détaillée
-      const promptAnalyse = `Tu analyses ces documents FFBB d'un match de basket U15 feminin entre WASQUEHAL et ${p.adversaire||"l'adversaire"}.
-Score final : WASQUEHAL ${p.score_wasquehal} - ${p.score_adversaire} ${p.adversaire||""}.
-Rédige une analyse détaillée en 3-4 phrases pour chacun de ces 4 aspects :
-1. MON ATTAQUE (Wasquehal) : systèmes utilisés, joueuses en réussite, ce qui a fonctionné
-2. MA DEFENSE (Wasquehal) : organisation défensive, stops réussis, points faibles
-3. ATTAQUE ADVERSE : comment ils ont attaqué, joueuses dangereuses, systèmes utilisés
-4. DEFENSE ADVERSE : type de défense jouée, comment on y a répondu, ce qui a posé problème
-Réponds avec exactement ce format JSON :
-{"mon_attaque":"...","ma_defense":"...","attaque_adverse":"...","defense_adverse":"..."}`;
+      // PASSE 2 : analyse narrative (sans PDF, juste les données extraites)
+      const promptAnalyse = `Tu es assistant coach basket. Voici les donnees d'un match WASQUEHAL vs ${p.adversaire||"adversaire"} (score: ${p.score_wasquehal||0}-${p.score_adversaire||0}).
+Stats WASQUEHAL: ${JSON.stringify(p.stats_wasquehal||[])}.
+Redige une analyse detaillee en 3-4 phrases pour chacun de ces 4 aspects.
+Reponds avec ce JSON : {"mon_attaque":"...","ma_defense":"...","attaque_adverse":"...","defense_adverse":"..."}`;
 
-      const txt2 = await askClaudeWithPDFs(allPdfs, promptAnalyse);
-      const a = JSON.parse(txt2.replace(/\`\`\`json|\`\`\`/g,"").trim());
+      const txt2 = await askClaude(null, [{role:"user", content: promptAnalyse}], 1500);
+      const a = JSON.parse(txt2.replace(/```json|```/g,"").trim());
+
 
       setForm(f=>({
         ...f,
