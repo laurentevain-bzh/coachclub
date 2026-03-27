@@ -728,8 +728,7 @@ Réponds avec exactement ce format JSON :
       const statsPreview = (p.stats_wasquehal||[]).map(sj => {
         const match = joueuses.find(j =>
           j.nom?.toLowerCase()===sj.nom?.toLowerCase() ||
-          j.prenom?.toLowerCase()===sj.prenom?.toLowerCase() ||
-          String(j.numero)===String(sj.numero)
+          j.prenom?.toLowerCase()===sj.prenom?.toLowerCase()
         );
         return { ...sj, points:sj.pts, tirs_reussis:(sj.int2||0)+(sj.ext2||0), tirs_tentes:(sj.int2||0)+(sj.ext2||0), tirs_3pts:sj.t3||0, lf_reussis:sj.lf||0, lf_tentes:sj.lf||0, fautes:sj.fautes||0, temps_jeu:sj.tps||"", int2:sj.int2||0, ext2:sj.ext2||0, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
       });
