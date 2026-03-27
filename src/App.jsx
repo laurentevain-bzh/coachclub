@@ -691,16 +691,17 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
 IDENTIFICATION : Cherche quelle section (LOCAUX ou VISITEURS) contient "WASQUEHAL" dans le nom d'equipe. C'est mon equipe. L'autre section = adversaire.
 
 COLONNES du tableau FFBB dans l'ordre exact :
-N° Maillot | NOM Prenom | 5 de depart (X = titulaire) | Tps de jeu | Nb Pts Marques | Nb Tirs Reussis | 3 Pts Reussis | 2 Int Reussis | 2 Ext Reussis | LF Reussis | Ftes Com
+N° Maillot | NOM Prenom | 5 de depart (X = titulaire) | Tps de jeu | Nb Pts Marques | Nb Tirs Reussis (IGNORER) | 3 Pts Reussis | 2 Int Reussis | 2 Ext Reussis | LF Reussis | Ftes Com
 
-IMPORTANT : Extrait les valeurs de chaque colonne individuellement. Ne pas additionner ou deduire.
-- pts = colonne "Nb Pts Marques"
-- t3 = colonne "3 Pts Reussis"
-- int2 = colonne "2 Int Reussis"
-- ext2 = colonne "2 Ext Reussis"
-- lf = colonne "LF Reussis"
-- fautes = colonne "Ftes Com"
-- tps = colonne "Tps de jeu"
+IMPORTANT : Ignore completement la colonne "Nb Tirs Reussis" — c'est juste un total de controle.
+Extrait uniquement :
+- pts = "Nb Pts Marques"
+- t3 = "3 Pts Reussis"
+- int2 = "2 Int Reussis"
+- ext2 = "2 Ext Reussis"
+- lf = "LF Reussis"
+- fautes = "Ftes Com"
+- tps = "Tps de jeu"
 - titulaire = true si X dans "5 de depart"
 
 Pour les ratios dans "DONNEES ET RATIOS" : prends avantage_max et serie_max de MON equipe (WASQUEHAL). points_banc = "Points du banc" de WASQUEHAL.
