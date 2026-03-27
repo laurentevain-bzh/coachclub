@@ -1069,12 +1069,12 @@ function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier, init
   const [selectedJoueuses, setSelectedJoueuses] = useState(() => new Set(joueuses.map(j=>j.id)));
   const [renforts, setRenforts] = useState(""); // joueuses extérieures (texte libre)
   const [selectedMatches, setSelectedMatches] = useState(() => new Set(matches.slice(0,6).map(m=>m.id)));
-  const [showSelections, setShowSelections] = useState(false);
+  const [showSelections, setShowSelections] = useState(true);
   const calEvent = initContext?.calendrierEvent || null;
 
   useEffect(()=>{ loadPlans(); },[saison.id]);
-  useEffect(()=>{ setSelectedJoueuses(new Set(joueuses.map(j=>j.id))); },[joueuses]);
-  useEffect(()=>{ setSelectedMatches(new Set(matches.slice(0,6).map(m=>m.id))); },[matches]);
+  useEffect(()=>{ if(joueuses.length>0 && selectedJoueuses.size===0) setSelectedJoueuses(new Set(joueuses.map(j=>j.id))); },[joueuses]);
+  useEffect(()=>{ if(matches.length>0 && selectedMatches.size===0) setSelectedMatches(new Set(matches.slice(0,6).map(m=>m.id))); },[matches]);
 
   const loadPlans = async () => setPlansExistants((await db.getPlansMatch(saison.id))||[]);
   const toggleJ = id => setSelectedJoueuses(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
