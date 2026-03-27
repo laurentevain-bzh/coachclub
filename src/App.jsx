@@ -487,7 +487,7 @@ function JoueusesPage({ club, saison, joueuses, evals, reload, statsSaison, matc
   const blankEval = () => ({ poste:POSITIONS[0], notes:"", ...Object.fromEntries(SKILLS.map(k=>[k,3])) });
   const getEval = jid => evals.find(e => e.joueuse_id === jid);
 
-  const openNew = () => { setEditId(null); setForm({ numero:"", prenom:"", nom:"", date_naissance:"", notes_globales:"" }); setEvalForm(blankEval()); setTab("profil"); setStatsJoueuse([]); setShowModal(true); };
+  const openNew = () => { setEditId(null); setForm({ numero:"", prenom:"", nom:"", date_naissance:"", notes_globales:"", type_joueuse:"fixe" }); setEvalForm(blankEval()); setTab("profil"); setStatsJoueuse([]); setShowModal(true); };
   const openEdit = async j => {
     const ev = getEval(j.id);
     const ef = ev ? { poste:ev.poste||POSITIONS[0], notes:ev.notes||"", ...Object.fromEntries(SKILLS.map((k,i)=>[k,ev[SKILL_DB[i]]||3])) } : blankEval();
@@ -501,8 +501,8 @@ function JoueusesPage({ club, saison, joueuses, evals, reload, statsSaison, matc
     setSaving(true);
     try {
       let jid = editId;
-      if (editId) { await db.updateJoueuse(editId, { numero:form.numero||"", prenom:form.prenom||"", nom:form.nom, date_naissance:form.date_naissance||"", notes_globales:form.notes_globales||"" }); }
-      else { jid = uid(); await db.createJoueuse({ id:jid, club_id:club.id, numero:form.numero||"", prenom:form.prenom||"", nom:form.nom, date_naissance:form.date_naissance||"", notes_globales:form.notes_globales||"" }); }
+      if (editId) { await db.updateJoueuse(editId, { numero:form.numero||"", prenom:form.prenom||"", nom:form.nom, date_naissance:form.date_naissance||"", notes_globales:form.notes_globales||"", type_joueuse:form.type_joueuse||"fixe" }); }
+      else { jid = uid(); await db.createJoueuse({ id:jid, club_id:club.id, numero:form.numero||"", prenom:form.prenom||"", nom:form.nom, date_naissance:form.date_naissance||"", notes_globales:form.notes_globales||"", type_joueuse:form.type_joueuse||"fixe" }); }
       const ep = { poste:evalForm.poste||POSITIONS[0], notes:evalForm.notes||"", tir:evalForm.Tir||evalForm.tir||3, dribble:evalForm.Dribble||evalForm.dribble||3, passe:evalForm.Passe||evalForm.passe||3, defense:evalForm["Défense"]||evalForm.defense||3, physique:evalForm.Physique||evalForm.physique||3, mental:evalForm.Mental||evalForm.mental||3 };
       const ex = await db.getEvalJoueuse(jid, saison.id);
       if (ex) { await db.updateEval(ex.id, ep); } else { await db.createEval({ id:uid(), joueuse_id:jid, saison_id:saison.id, ...ep }); }
@@ -535,7 +535,10 @@ function JoueusesPage({ club, saison, joueuses, evals, reload, statsSaison, matc
         return <div key={j.id} className="pcard" onClick={()=>openEdit(j)}>
           <div className="pnum">#{j.numero||"?"}</div>
           <div className="pname">{j.prenom} {j.nom}</div>
-          <div className="ppos">{ev?.poste||"–"}</div>
+          <div className="flex gap2 items-c" style={{marginBottom:4}}>
+            <div className="ppos">{ev?.poste||"–"}</div>
+            {j.type_joueuse==="regional" && <span className="badge b-blue" style={{fontSize:8}}>⭐ Régionale</span>}
+          </div>
           {ev ? SKILL_DB.map((k,i)=><SkillBar key={k} label={SKILLS[i]} value={ev[k]||3}/>) : <p className="muted" style={{fontSize:11,marginTop:8}}>Pas encore évalué cette saison</p>}
           {qs && <div style={{marginTop:10,padding:"8px 0",borderTop:"1px solid var(--border)"}}>
             <div style={{display:"flex",gap:12}}>
@@ -591,6 +594,17 @@ function JoueusesPage({ club, saison, joueuses, evals, reload, statsSaison, matc
           <div className="grid2">
             <div className="field"><label>N° maillot</label><input value={form.numero||""} onChange={e=>setForm(f=>({...f,numero:e.target.value}))} placeholder="7"/></div>
             <div className="field"><label>Date naissance</label><input type="date" value={form.date_naissance||""} onChange={e=>setForm(f=>({...f,date_naissance:e.target.value}))}/></div>
+          </div>
+          <div className="field">
+            <label>Type de joueuse</label>
+            <div className="flex gap2">
+              <button className={`btn ${(form.type_joueuse||"fixe")==="fixe"?"btn-accent":"btn-ghost"}`} onClick={()=>setForm(f=>({...f,type_joueuse:"fixe"}))}>
+                👥 Effectif fixe
+              </button>
+              <button className={`btn ${form.type_joueuse==="regional"?"btn-sparring":"btn-ghost"}`} onClick={()=>setForm(f=>({...f,type_joueuse:"regional"}))}>
+                ⭐ Renfort régional
+              </button>
+            </div>
           </div>
           <div className="field"><label>Notes permanentes</label><textarea value={form.notes_globales||""} onChange={e=>setForm(f=>({...f,notes_globales:e.target.value}))} placeholder="Notes sur la joueuse qui traversent les saisons et les équipes..."/></div>
         </>}
@@ -1078,7 +1092,7 @@ function GamePlanPage({ club, saison, joueuses, evals, matches, calendrier, init
     setLoading(true); setOutput(""); setSaved(false);
 
     const joueusesDispo = joueuses.filter(j=>selectedJoueuses.has(j.id));
-    const p = joueusesDispo.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
+    const p = joueusesDispo.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.type_joueuse==="regional"?"[RENFORT REGIONAL] ":""}${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
     const renfLine = renforts.trim() ? `\nRENFORTS (extérieurs): ${renforts}` : "";
 
     const matchesSel = matches.filter(m=>selectedMatches.has(m.id));
@@ -1310,7 +1324,7 @@ function SparringPage({ club, saison, joueuses, evals, matches, chatHistory, rel
     if (!msg.trim()||loading) return;
     setInput(""); setLoading(true);
     try { await db.addChat({ club_id:club.id, saison_id:saison.id, role:"user", content:msg.trim(), coach:coachName }); await reloadChat(); } catch {}
-    const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
+    const p = joueuses.map(j=>{ const ev=evals.find(e=>e.joueuse_id===j.id); return `${j.type_joueuse==="regional"?"[RENFORT REGIONAL] ":""}${j.prenom} ${j.nom} (#${j.numero}, ${ev?.poste||"?"}) Tir:${ev?.tir||3} Déf:${ev?.defense||3} Phys:${ev?.physique||3} Mental:${ev?.mental||3}. ${j.notes_globales||""} ${ev?.notes||""}`; }).join("\n");
     const m = matches.slice(0,8).map(ma=>`${ma.date||"–"} vs ${ma.adversaire}: ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux}\nAtt: ${ma.mon_attaque||"–"} | Déf: ${ma.ma_defense||"–"}`).join("\n\n");
     const prev = allMatches?.filter(ma=>ma.saison_id!==saison.id).slice(0,8).map(ma=>`[Saison préc.] ${ma.date} vs ${ma.adversaire}: ${ma.score_nous}-${ma.score_eux}`).join("\n")||"";
     const sys = `Tu es un sparring partner exigeant pour un coach basket. Challenge ses décisions, ne les valide pas. Avocat du diable bienveillant.
