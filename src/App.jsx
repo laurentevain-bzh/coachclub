@@ -686,10 +686,28 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
       const allPdfs = Object.entries(pdfs).filter(([,v])=>v).map(([,v])=>v);
 
       // PASSE 1 : extraction données chiffrées
-      const promptStats = `Tu analyses des documents officiels FFBB d'un match de basket U15 feminin.
-REGLE : L'equipe de l'utilisateur contient WASQUEHAL. L'adversaire est l'AUTRE equipe.
-Reponds UNIQUEMENT en JSON valide sans texte autour :
-{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"points_banc":0,"avantage_max":0,"serie_max":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"int2":0,"ext2":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"int2":0,"ext2":0,"t3":0,"lf":0,"fautes":0}]}`;
+      const promptStats = `Tu analyses une fiche de score officielle FFBB d'un match de basket U15 feminin.
+
+IDENTIFICATION : Cherche quelle section (LOCAUX ou VISITEURS) contient "WASQUEHAL" dans le nom d'equipe. C'est mon equipe. L'autre section = adversaire.
+
+COLONNES du tableau FFBB dans l'ordre exact :
+N° Maillot | NOM Prenom | 5 de depart (X = titulaire) | Tps de jeu | Nb Pts Marques | Nb Tirs Reussis | 3 Pts Reussis | 2 Int Reussis | 2 Ext Reussis | LF Reussis | Ftes Com
+
+IMPORTANT : Extrait les valeurs de chaque colonne individuellement. Ne pas additionner ou deduire.
+- pts = colonne "Nb Pts Marques"
+- t3 = colonne "3 Pts Reussis"
+- int2 = colonne "2 Int Reussis"
+- ext2 = colonne "2 Ext Reussis"
+- lf = colonne "LF Reussis"
+- fautes = colonne "Ftes Com"
+- tps = colonne "Tps de jeu"
+- titulaire = true si X dans "5 de depart"
+
+Pour les ratios dans "DONNEES ET RATIOS" : prends avantage_max et serie_max de MON equipe (WASQUEHAL). points_banc = "Points du banc" de WASQUEHAL.
+Pour les scores par quart-temps : si tu as la feuille de match officielle, cherche le tableau des scores par quart (QT1, QT2, QT3, QT4). qt_nous = score de WASQUEHAL, qt_eux = score adversaire pour ce quart.
+
+Reponds UNIQUEMENT en JSON valide sans aucun texte autour :
+{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"int2":0,"ext2":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"int2":0,"ext2":0,"lf":0,"fautes":0}]}`;
 
       const txt1 = await askClaudeWithPDFs(allPdfs, promptStats);
       const p = JSON.parse(txt1.replace(/\`\`\`json|\`\`\`/g,"").trim());
@@ -730,7 +748,7 @@ Réponds avec exactement ce format JSON :
           j.nom?.toLowerCase()===sj.nom?.toLowerCase() ||
           j.prenom?.toLowerCase()===sj.prenom?.toLowerCase()
         );
-        return { ...sj, points:sj.pts, tirs_reussis:(sj.int2||0)+(sj.ext2||0), tirs_tentes:(sj.int2||0)+(sj.ext2||0), tirs_3pts:sj.t3||0, lf_reussis:sj.lf||0, lf_tentes:sj.lf||0, fautes:sj.fautes||0, temps_jeu:sj.tps||"", int2:sj.int2||0, ext2:sj.ext2||0, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
+        return { ...sj, points:sj.pts, tirs_reussis:sj.tirs||0, tirs_tentes:sj.tirs||0, tirs_3pts:sj.t3||0, lf_reussis:sj.lf||0, lf_tentes:sj.lf||0, fautes:sj.fautes||0, temps_jeu:sj.tps||"", int2:sj.int2||0, ext2:sj.ext2||0, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
       });
       setStatsMatch(statsPreview);
     } catch(e) { alert(`Erreur d'analyse PDF: ${e.message}`); }
@@ -839,7 +857,7 @@ Réponds avec exactement ce format JSON :
           <div style={{overflowX:"auto",marginBottom:16}}>
             <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
-                {["#","Joueuse","T","Pts","2Int","2Ext","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+                {["#","Joueuse","T","Pts","Tirs","2Int","2Ext","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
               <tbody>{statsMatch.map((s,i)=>{
                 const j = joueuses.find(x=>x.id===s.joueuse_id);
@@ -850,10 +868,11 @@ Réponds avec exactement ce format JSON :
                   <td style={{padding:"6px 8px",fontWeight:s.titulaire?600:400}}>{nom}</td>
                   <td style={{padding:"6px 8px",color:"var(--accent)"}}>{s.titulaire?"★":""}</td>
                   <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.tirs_reussis||0}</td>
                   <td style={{padding:"6px 8px"}}>{s.int2||0}</td>
                   <td style={{padding:"6px 8px"}}>{s.ext2||0}</td>
-                  <td style={{padding:"6px 8px"}}>{s.tirs_3pts||s.t3||0}</td>
-                  <td style={{padding:"6px 8px"}}>{s.lf_reussis||s.lf||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.tirs_3pts||0}</td>
+                  <td style={{padding:"6px 8px"}}>{s.lf_reussis||0}</td>
                   <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
                 </tr>;
               })}</tbody>
