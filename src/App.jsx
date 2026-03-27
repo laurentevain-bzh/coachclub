@@ -690,19 +690,23 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
 
 IDENTIFICATION : Cherche quelle section (LOCAUX ou VISITEURS) contient "WASQUEHAL" dans le nom d'equipe. C'est mon equipe. L'autre section = adversaire.
 
-COLONNES du tableau FFBB dans l'ordre exact :
-N° Maillot | NOM Prenom | 5 de depart (X = titulaire) | Tps de jeu | Nb Pts Marques | Nb Tirs Reussis (IGNORER) | 3 Pts Reussis | 2 Int Reussis | 2 Ext Reussis | LF Reussis | Ftes Com
+STRUCTURE DU TABLEAU FFBB — colonnes dans l'ordre de gauche a droite :
+COL 1 : N° Maillot
+COL 2 : NOM Prenom
+COL 3 : 5 de depart (X = titulaire, vide = remplacante)
+COL 4 : Tps de jeu
+COL 5 : Nb Pts Marques  ← PTS A EXTRAIRE
+COL 6 : Nb Tirs Reussis ← IGNORER COMPLETEMENT (colonne de controle)
+COL 7 : 3 Pts Reussis   ← T3 A EXTRAIRE
+COL 8 : 2 Int Reussis   ← INT2 A EXTRAIRE
+COL 9 : 2 Ext Reussis   ← EXT2 A EXTRAIRE
+COL 10 : LF Reussis     ← LF A EXTRAIRE
+COL 11 : Ftes Com       ← FAUTES A EXTRAIRE
 
-IMPORTANT : Ignore completement la colonne "Nb Tirs Reussis" — c'est juste un total de controle.
-Extrait uniquement :
-- pts = "Nb Pts Marques"
-- t3 = "3 Pts Reussis"
-- int2 = "2 Int Reussis"
-- ext2 = "2 Ext Reussis"
-- lf = "LF Reussis"
-- fautes = "Ftes Com"
-- tps = "Tps de jeu"
-- titulaire = true si X dans "5 de depart"
+VERIFICATION : La somme des pts de toutes les joueuses doit etre egale au "Total Equipe" en bas du tableau.
+Si ce n'est pas le cas, tu as mal lu une colonne — recommence en verifiant COL 5 pour les points.
+
+Pour les DONNEES ET RATIOS : avantage_max, serie_max, points_banc = valeurs de l'equipe WASQUEHAL (LOCAUX ou VISITEURS selon le match).
 
 Pour les ratios dans "DONNEES ET RATIOS" : prends avantage_max et serie_max de MON equipe (WASQUEHAL). points_banc = "Points du banc" de WASQUEHAL.
 Pour les scores par quart-temps : si tu as la feuille de match officielle, cherche le tableau des scores par quart (QT1, QT2, QT3, QT4). qt_nous = score de WASQUEHAL, qt_eux = score adversaire pour ce quart.
