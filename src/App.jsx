@@ -686,33 +686,7 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
       const allPdfs = Object.entries(pdfs).filter(([,v])=>v).map(([,v])=>v);
 
       // PASSE 1 : extraction données chiffrées
-      const promptStats = `Tu analyses une fiche de score officielle FFBB d'un match de basket U15 feminin.
-
-IDENTIFICATION : Cherche quelle section (LOCAUX ou VISITEURS) contient "WASQUEHAL" dans le nom d'equipe. C'est mon equipe. L'autre section = adversaire.
-
-STRUCTURE DU TABLEAU FFBB — colonnes dans l'ordre de gauche a droite :
-COL 1 : N° Maillot
-COL 2 : NOM Prenom
-COL 3 : 5 de depart (X = titulaire, vide = remplacante)
-COL 4 : Tps de jeu
-COL 5 : Nb Pts Marques  ← PTS A EXTRAIRE
-COL 6 : Nb Tirs Reussis ← IGNORER COMPLETEMENT (colonne de controle)
-COL 7 : 3 Pts Reussis   ← T3 A EXTRAIRE
-COL 8 : 2 Int Reussis   ← INT2 A EXTRAIRE
-COL 9 : 2 Ext Reussis   ← EXT2 A EXTRAIRE
-COL 10 : LF Reussis     ← LF A EXTRAIRE
-COL 11 : Ftes Com       ← FAUTES A EXTRAIRE
-
-VERIFICATION : La somme des pts de toutes les joueuses doit etre egale au "Total Equipe" en bas du tableau.
-Si ce n'est pas le cas, tu as mal lu une colonne — recommence en verifiant COL 5 pour les points.
-
-Pour les DONNEES ET RATIOS : avantage_max, serie_max, points_banc = valeurs de l'equipe WASQUEHAL (LOCAUX ou VISITEURS selon le match).
-
-Pour les ratios dans "DONNEES ET RATIOS" : prends avantage_max et serie_max de MON equipe (WASQUEHAL). points_banc = "Points du banc" de WASQUEHAL.
-Pour les scores par quart-temps : si tu as la feuille de match officielle, cherche le tableau des scores par quart (QT1, QT2, QT3, QT4). qt_nous = score de WASQUEHAL, qt_eux = score adversaire pour ce quart.
-
-Reponds UNIQUEMENT en JSON valide sans aucun texte autour :
-{"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"int2":0,"ext2":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"int2":0,"ext2":0,"lf":0,"fautes":0}]}`;
+      const promptStats = `Fiche de score FFBB basket U15. L'equipe WASQUEHAL (dans LOCAUX ou VISITEURS) = mon equipe. Reponds UNIQUEMENT en JSON valide sans texte autour : {"adversaire":"","score_wasquehal":0,"score_adversaire":0,"date":"YYYY-MM-DD","defense_type_adverse":"","points_banc":0,"avantage_max":0,"serie_max":0,"qt1_nous":0,"qt1_eux":0,"qt2_nous":0,"qt2_eux":0,"qt3_nous":0,"qt3_eux":0,"qt4_nous":0,"qt4_eux":0,"stats_wasquehal":[{"nom":"","prenom":"","numero":0,"titulaire":false,"pts":0,"t3":0,"lf":0,"fautes":0,"tps":""}],"stats_adversaire":[{"nom":"","prenom":"","numero":0,"pts":0,"t3":0,"lf":0,"fautes":0}]}`;
 
       const txt1 = await askClaudeWithPDFs(allPdfs, promptStats);
       const p = JSON.parse(txt1.replace(/\`\`\`json|\`\`\`/g,"").trim());
@@ -753,7 +727,7 @@ Réponds avec exactement ce format JSON :
           j.nom?.toLowerCase()===sj.nom?.toLowerCase() ||
           j.prenom?.toLowerCase()===sj.prenom?.toLowerCase()
         );
-        return { ...sj, points:sj.pts, tirs_reussis:sj.tirs||0, tirs_tentes:sj.tirs||0, tirs_3pts:sj.t3||0, lf_reussis:sj.lf||0, lf_tentes:sj.lf||0, fautes:sj.fautes||0, temps_jeu:sj.tps||"", int2:sj.int2||0, ext2:sj.ext2||0, joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
+        return { ...sj, points:sj.pts||0, tirs_reussis:0, tirs_tentes:0, tirs_3pts:sj.t3||0, lf_reussis:sj.lf||0, lf_tentes:0, fautes:sj.fautes||0, temps_jeu:sj.tps||"", joueuse_id:match?.id||null, joueuse_nom:match?`${match.prenom} ${match.nom}`:`${sj.prenom||""} ${sj.nom||""}`.trim() };
       });
       setStatsMatch(statsPreview);
     } catch(e) { alert(`Erreur d'analyse PDF: ${e.message}`); }
@@ -862,7 +836,7 @@ Réponds avec exactement ce format JSON :
           <div style={{overflowX:"auto",marginBottom:16}}>
             <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
-                {["#","Joueuse","T","Pts","Tirs","2Int","2Ext","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+                {["#","Joueuse","T","Pts","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
               <tbody>{statsMatch.map((s,i)=>{
                 const j = joueuses.find(x=>x.id===s.joueuse_id);
@@ -873,9 +847,6 @@ Réponds avec exactement ce format JSON :
                   <td style={{padding:"6px 8px",fontWeight:s.titulaire?600:400}}>{nom}</td>
                   <td style={{padding:"6px 8px",color:"var(--accent)"}}>{s.titulaire?"★":""}</td>
                   <td style={{padding:"6px 8px",fontWeight:700,color:s.points>0?"var(--accent)":"var(--muted)"}}>{s.points||0}</td>
-                  <td style={{padding:"6px 8px"}}>{s.tirs_reussis||0}</td>
-                  <td style={{padding:"6px 8px"}}>{s.int2||0}</td>
-                  <td style={{padding:"6px 8px"}}>{s.ext2||0}</td>
                   <td style={{padding:"6px 8px"}}>{s.tirs_3pts||0}</td>
                   <td style={{padding:"6px 8px"}}>{s.lf_reussis||0}</td>
                   <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
@@ -891,14 +862,12 @@ Réponds avec exactement ce format JSON :
           <div style={{overflowX:"auto",marginBottom:16}}>
             <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
               <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
-                {["#","Joueuse","Pts","2Int","2Ext","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
+                {["#","Joueuse","Pts","3Pts","LF","Fautes"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:"left",fontFamily:"Oswald",fontSize:10,letterSpacing:1,color:"var(--muted)",textTransform:"uppercase"}}>{h}</th>)}
               </tr></thead>
               <tbody>{showDetail.stats_adversaires.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--border)33"}}>
                 <td style={{padding:"6px 8px",fontFamily:"Oswald",fontWeight:700,color:"var(--court)"}}>{s.numero||"–"}</td>
                 <td style={{padding:"6px 8px"}}>{s.prenom||""} {s.nom||""}</td>
                 <td style={{padding:"6px 8px",fontWeight:700,color:s.pts>0?"var(--red)":"var(--muted)"}}>{s.pts||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.int2||0}</td>
-                <td style={{padding:"6px 8px"}}>{s.ext2||0}</td>
                 <td style={{padding:"6px 8px"}}>{s.t3||0}</td>
                 <td style={{padding:"6px 8px"}}>{s.lf||0}</td>
                 <td style={{padding:"6px 8px",color:(s.fautes||0)>=4?"var(--red)":"var(--white)"}}>{s.fautes||0}</td>
