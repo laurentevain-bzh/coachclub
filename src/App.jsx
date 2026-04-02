@@ -652,10 +652,12 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
   const emptyForm = () => ({ date:"", adversaire:"", score_nous:"", score_eux:"", defense_adverse:"", joueuses_cles:"", mon_attaque:"", ma_defense:"", attaque_adverse:"", defense_adverse_notes:"", stats_joueuses:[], stats_equipe:{}, progression_score:{}, pdf_tirs_url:"", stats_adversaires:[] });
   const [form, setForm] = useState(emptyForm());
 
+  const safeJson = (v, def=[]) => { try { return typeof v==="string" ? JSON.parse(v||JSON.stringify(def)) : (v||def); } catch { return def; } };
+
   const openNew = () => { setEditMatch(null); setPdfs({ feuille:null, score:null, tirs:null }); setTirsPdfFile(null); setPdfStatus({ feuille:"", score:"", tirs:"" }); setForm(emptyForm()); setStatsMatch([]); setShowModal(true); };
   const openEdit = m => {
     setEditMatch(m);
-    setForm({ date:m.date||"", adversaire:m.adversaire||"", score_nous:m.score_nous||"", score_eux:m.score_eux||"", defense_adverse:m.defense_adverse||"", joueuses_cles:m.joueuses_cles||"", mon_attaque:m.mon_attaque||"", ma_defense:m.ma_defense||"", attaque_adverse:m.attaque_adverse||"", defense_adverse_notes:m.defense_adverse_notes||"", stats_joueuses:m.stats_joueuses||[], stats_equipe:m.stats_equipe||{}, progression_score:m.progression_score||{}, pdf_tirs_url:m.pdf_tirs_url||"", stats_adversaires:m.stats_adversaires||[] });
+    setForm({ date:m.date||"", adversaire:m.adversaire||"", score_nous:m.score_nous||"", score_eux:m.score_eux||"", defense_adverse:m.defense_adverse||"", joueuses_cles:m.joueuses_cles||"", mon_attaque:m.mon_attaque||"", ma_defense:m.ma_defense||"", attaque_adverse:m.attaque_adverse||"", defense_adverse_notes:m.defense_adverse_notes||"", stats_joueuses:safeJson(m.stats_joueuses,[]), stats_equipe:safeJson(m.stats_equipe,{}), progression_score:safeJson(m.progression_score,{}), pdf_tirs_url:m.pdf_tirs_url||"", stats_adversaires:safeJson(m.stats_adversaires,[]) });
     setPdfs({ feuille:null, score:null, tirs:null }); setTirsPdfFile(null); setPdfStatus({ feuille:"", score:"", tirs:"" });
     db.getStatsMatch(m.id).then(s=>setStatsMatch(s||[]));
     setShowModal(true);
@@ -674,7 +676,14 @@ function MatchsPage({ club, saison, joueuses, matches, reload }) {
   const openDetail = async m => {
     const stats = await db.getStatsMatch(m.id);
     setStatsMatch(stats||[]);
-    setShowDetail(m);
+    // Parse sécurisé des champs JSONB
+    setShowDetail({
+      ...m,
+      stats_joueuses: safeJson(m.stats_joueuses,[]),
+      stats_equipe: safeJson(m.stats_equipe,{}),
+      progression_score: safeJson(m.progression_score,{}),
+      stats_adversaires: safeJson(m.stats_adversaires,[]),
+    });
   };
 
   const handlePdf = async (type, file) => {
@@ -791,7 +800,8 @@ Reponds avec ce JSON : {"mon_attaque":"...","ma_defense":"...","attaque_adverse"
     {matches.length===0 && <div className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:12}}>📋</div><p className="muted">Aucun match cette saison.</p></div>}
     {matches.map(m=>{
       const w=parseInt(m.score_nous)>parseInt(m.score_eux);
-      const hasStats = m.stats_joueuses?.length > 0;
+      const statsJ = typeof m.stats_joueuses === "string" ? JSON.parse(m.stats_joueuses||"[]") : (m.stats_joueuses||[]);
+      const hasStats = statsJ.length > 0;
       return <div key={m.id} className="mitem">
         <span className="mdate" style={{cursor:"pointer"}} onClick={()=>openDetail(m)}>{m.date||"–"}</span>
         <div style={{flex:1,cursor:"pointer"}} onClick={()=>openDetail(m)}>
@@ -1315,6 +1325,15 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, matches, init
   </div>;
 }
 
+const searchYoutube = async (query) => {
+  const res = await fetch("/api/claude", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ service: "youtube", query }),
+  });
+  if (!res.ok) throw new Error(`YouTube ${res.status}`);
+  return await res.json();
+};
+
 /* ─── EXERCICES ─── */
 const CATEGORIES = ["Attaque","Défense","Tir","Passes","Dribble","Physique","Collectif","Échauffement","Retour au calme"];
 const NIVEAUX = ["Tous niveaux","Débutant","Intermédiaire","Avancé"];
@@ -1325,13 +1344,17 @@ function ExercicesPage({ club }) {
   const [editId, setEditId] = useState(null);
   const [filterCat, setFilterCat] = useState("Tous");
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState("biblio"); // "biblio" | "recherche"
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
   const emptyForm = () => ({ nom:"", categorie:"Attaque", description:"", youtube_url:"", niveau:"Tous niveaux", tags:"" });
   const [form, setForm] = useState(emptyForm());
 
   useEffect(()=>{ load(); },[club.id]);
   const load = async () => setExercices((await db.getExercices(club.id))||[]);
 
-  const openNew = () => { setEditId(null); setForm(emptyForm()); setShowModal(true); };
+  const openNew = (prefill={}) => { setEditId(null); setForm({...emptyForm(),...prefill}); setShowModal(true); };
   const openEdit = e => { setEditId(e.id); setForm({...e}); setShowModal(true); };
 
   const save = async () => {
@@ -1347,6 +1370,16 @@ function ExercicesPage({ club }) {
 
   const del = async id => { if (!confirm("Supprimer cet exercice ?")) return; await db.deleteExercice(id); await load(); };
 
+  const search = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true); setSearchResults([]);
+    try {
+      const data = await searchYoutube(searchQuery + " basketball exercice");
+      setSearchResults(data.items||[]);
+    } catch(e) { alert(`Erreur recherche: ${e.message}`); }
+    setSearching(false);
+  };
+
   const getYoutubeId = url => {
     try {
       const u = new URL(url);
@@ -1361,47 +1394,93 @@ function ExercicesPage({ club }) {
   return <div>
     <div className="flex jc-sb items-c" style={{marginBottom:20}}>
       <h2 className="page-title" style={{margin:0}}>Bibliothèque <span>({exercices.length})</span></h2>
-      <button className="btn btn-accent" onClick={openNew}>+ Exercice</button>
+      <button className="btn btn-accent" onClick={()=>openNew()}>+ Exercice</button>
     </div>
 
-    {/* Filtres catégorie */}
-    <div className="flex gap2" style={{flexWrap:"wrap",marginBottom:20}}>
-      {cats.map(c=><button key={c} className={`btn ${filterCat===c?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"5px 12px"}} onClick={()=>setFilterCat(c)}>{c}</button>)}
+    <div className="tabs" style={{marginBottom:16}}>
+      <button className={`tab ${tab==="biblio"?"active":""}`} onClick={()=>setTab("biblio")}>📚 Ma bibliothèque</button>
+      <button className={`tab ${tab==="recherche"?"active":""}`} onClick={()=>setTab("recherche")}>🔍 Rechercher sur YouTube</button>
     </div>
 
-    {exercices.length===0 && <div className="card" style={{textAlign:"center",padding:40}}>
-      <div style={{fontSize:48,marginBottom:12}}>🎬</div>
-      <p className="muted">Aucun exercice encore. Commence à construire ta bibliothèque !</p>
-    </div>}
-
-    {Object.entries(grouped).map(([cat, exos])=>(
-      <div key={cat} style={{marginBottom:24}}>
-        {filterCat==="Tous" && <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:2,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>{cat}</p>}
-        <div className="exo-grid">
-          {exos.map(e=>{
-            const ytId = getYoutubeId(e.youtube_url);
-            return <div key={e.id} className="exo-card">
-              {/* Thumbnail YouTube */}
-              {ytId && <a href={e.youtube_url} target="_blank" rel="noopener noreferrer" style={{display:"block",marginBottom:10,position:"relative",borderRadius:2,overflow:"hidden"}}>
-                <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt={e.nom} style={{width:"100%",height:140,objectFit:"cover",display:"block"}}/>
+    {tab==="recherche" && <>
+      <div className="card">
+        <div className="card-title">🎬 Recherche YouTube</div>
+        <div className="flex gap2" style={{marginBottom:16}}>
+          <input className="field" style={{flex:1,margin:0,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:2,color:"var(--white)",fontSize:14,padding:"9px 12px",outline:"none"}}
+            value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&search()}
+            placeholder="Ex: exercice défense zone basketball U15..."/>
+          <button className="btn btn-accent" onClick={search} disabled={searching||!searchQuery.trim()}>{searching?"⏳...":"🔍 Rechercher"}</button>
+        </div>
+        {searching && <div className="ai-loading"><div className="spinner"/><span>Recherche en cours...</span></div>}
+        {searchResults.length>0 && <div className="exo-grid">
+          {searchResults.map(item=>{
+            const vid = item.id?.videoId;
+            const title = item.snippet?.title;
+            const channel = item.snippet?.channelTitle;
+            const thumb = item.snippet?.thumbnails?.medium?.url;
+            const url = `https://www.youtube.com/watch?v=${vid}`;
+            const alreadyAdded = exercices.some(e=>e.youtube_url.includes(vid));
+            return <div key={vid} className="exo-card">
+              <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",marginBottom:10,position:"relative",borderRadius:2,overflow:"hidden"}}>
+                <img src={thumb} alt={title} style={{width:"100%",height:140,objectFit:"cover",display:"block"}}/>
                 <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#00000055"}}>
-                  <span style={{fontSize:40,color:"white",textShadow:"0 2px 8px #000"}}>▶</span>
+                  <span style={{fontSize:40,color:"white"}}>▶</span>
                 </div>
-              </a>}
-              <div className="exo-cat">{e.categorie} {e.niveau&&e.niveau!=="Tous niveaux"?`· ${e.niveau}`:""}</div>
-              <div className="exo-nom">{e.nom}</div>
-              {e.description && <div className="exo-desc">{e.description}</div>}
-              {e.tags && <div style={{marginBottom:8,display:"flex",flexWrap:"wrap",gap:4}}>{e.tags.split(",").map(t=>t.trim()).filter(Boolean).map(t=><span key={t} className="badge b-yellow">{t}</span>)}</div>}
-              <div className="flex gap2 mt2">
-                <a href={e.youtube_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{flex:1,justifyContent:"center",textDecoration:"none",fontSize:11}}>🎬 Voir la vidéo</a>
-                <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 10px"}} onClick={()=>openEdit(e)}>✏️</button>
-                <button className="btn btn-danger" style={{padding:"5px 10px"}} onClick={()=>del(e.id)}>✕</button>
+              </a>
+              <div className="exo-cat">{channel}</div>
+              <div className="exo-nom" style={{fontSize:13,marginBottom:8}}>{title}</div>
+              <div className="flex gap2">
+                <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{flex:1,justifyContent:"center",textDecoration:"none",fontSize:11}}>▶ Voir</a>
+                {alreadyAdded
+                  ? <span className="badge b-green" style={{padding:"5px 10px"}}>✅ Ajouté</span>
+                  : <button className="btn btn-accent" style={{fontSize:11}} onClick={()=>{ setTab("biblio"); openNew({ nom:title, youtube_url:url }); }}>+ Ajouter</button>}
               </div>
             </div>;
           })}
-        </div>
+        </div>}
       </div>
-    ))}
+    </>}
+
+    {tab==="biblio" && <>
+      {/* Filtres */}
+      <div className="flex gap2" style={{flexWrap:"wrap",marginBottom:16}}>
+        {cats.map(c=><button key={c} className={`btn ${filterCat===c?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"5px 12px"}} onClick={()=>setFilterCat(c)}>{c}</button>)}
+      </div>
+
+      {exercices.length===0 && <div className="card" style={{textAlign:"center",padding:40}}>
+        <div style={{fontSize:48,marginBottom:12}}>🎬</div>
+        <p className="muted">Aucun exercice encore. Utilise la recherche YouTube ou ajoute manuellement !</p>
+      </div>}
+
+      {Object.entries(grouped).map(([cat, exos])=>(
+        <div key={cat} style={{marginBottom:24}}>
+          {filterCat==="Tous" && <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:2,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>{cat}</p>}
+          <div className="exo-grid">
+            {exos.map(e=>{
+              const ytId = getYoutubeId(e.youtube_url);
+              return <div key={e.id} className="exo-card">
+                {ytId && <a href={e.youtube_url} target="_blank" rel="noopener noreferrer" style={{display:"block",marginBottom:10,position:"relative",borderRadius:2,overflow:"hidden"}}>
+                  <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt={e.nom} style={{width:"100%",height:140,objectFit:"cover",display:"block"}}/>
+                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#00000055"}}>
+                    <span style={{fontSize:40,color:"white"}}>▶</span>
+                  </div>
+                </a>}
+                <div className="exo-cat">{e.categorie}{e.niveau&&e.niveau!=="Tous niveaux"?` · ${e.niveau}`:""}</div>
+                <div className="exo-nom">{e.nom}</div>
+                {e.description && <div className="exo-desc">{e.description}</div>}
+                {e.tags && <div style={{marginBottom:8,display:"flex",flexWrap:"wrap",gap:4}}>{e.tags.split(",").map(t=>t.trim()).filter(Boolean).map(t=><span key={t} className="badge b-yellow">{t}</span>)}</div>}
+                <div className="flex gap2 mt2">
+                  <a href={e.youtube_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{flex:1,justifyContent:"center",textDecoration:"none",fontSize:11}}>▶ Voir</a>
+                  <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 10px"}} onClick={()=>openEdit(e)}>✏️</button>
+                  <button className="btn btn-danger" style={{padding:"5px 10px"}} onClick={()=>del(e.id)}>✕</button>
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>
+      ))}
+    </>}
 
     {showModal && <div className="overlay" onClick={()=>setShowModal(false)}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
