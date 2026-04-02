@@ -1681,6 +1681,7 @@ export default function App() {
           {page==="training" && <TrainingPage club={club} saison={saison} joueuses={joueuses} evals={evals} calendrier={calendrier} matches={matches} initContext={navCtx}/>}
           {page==="calendrier" && <CalendrierPage club={club} saison={saison} calendrier={calendrier} matches={matches} reload={reloadCal} onNavigate={navigate}/>}
           {page==="joueuses" && <JoueusesPage club={club} saison={saison} joueuses={joueuses} evals={evals} reload={reloadJ} statsSaison={statsSaison} matches={matches}/>}
+          {page==="matchs" && <MatchsPage club={club} saison={saison} joueuses={joueuses} matches={matches} reload={reloadM}/>}
           {page==="exercices" && <ExercicesPage club={club}/>}
         </main>
       </div>
