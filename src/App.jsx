@@ -1227,14 +1227,22 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, matches, init
   const [renforts, setRenforts] = useState("");
   const [selectedMatches, setSelectedMatches] = useState(() => new Set((matches||[]).slice(0,4).map(m=>m.id)));
   const [showSelections, setShowSelections] = useState(false);
+  const [exercices, setExercices] = useState([]);
+  const [selectedExercices, setSelectedExercices] = useState(new Set());
+  const [showExercices, setShowExercices] = useState(false);
 
-  useEffect(()=>{ loadPlans(); },[saison.id]);
+  useEffect(()=>{ loadPlans(); loadExos(); },[saison.id]);
   useEffect(()=>{ setSelectedJoueuses(new Set(joueuses.map(j=>j.id))); },[joueuses]);
   useEffect(()=>{ setSelectedMatches(new Set((matches||[]).slice(0,4).map(m=>m.id))); },[matches]);
 
   const loadPlans = async () => setPlansExistants((await db.getPlansEntr(saison.id))||[]);
+  const loadExos = async () => setExercices((await db.getExercices(club.id))||[]);
   const toggleJ = id => setSelectedJoueuses(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
   const toggleM = id => setSelectedMatches(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  const toggleE = id => setSelectedExercices(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+
+  // Grouper les exos par catégorie
+  const exosBycat = exercices.reduce((acc,e)=>{ if(!acc[e.categorie]) acc[e.categorie]=[]; acc[e.categorie].push(e); return acc; }, {});
 
   const generate = async () => {
     setLoading(true); setOutput(""); setSaved(false);
@@ -1243,8 +1251,10 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, matches, init
     const renfLine = renforts.trim() ? `\nRENFORTS: ${renforts}` : "";
     const matchesSel = (matches||[]).filter(m=>selectedMatches.has(m.id));
     const mCtx = matchesSel.length ? `\nHISTORIQUE SÉLECTIONNÉ:\n${matchesSel.map(ma=>`${ma.date} vs ${ma.adversaire} ${parseInt(ma.score_nous)>parseInt(ma.score_eux)?"V":"D"} ${ma.score_nous}-${ma.score_eux} | ${ma.mon_attaque?.slice(0,60)||"–"}`).join("\n")}` : "";
+    const exosSel = exercices.filter(e=>selectedExercices.has(e.id));
+    const exosCtx = exosSel.length ? `\nEXERCICES DE MA BIBLIOTHÈQUE À INTÉGRER:\n${exosSel.map(e=>`- [${e.categorie}] ${e.nom}${e.description?` : ${e.description}`:""}`).join("\n")}\nIntègre ces exercices dans le plan en les adaptant au contexte et à la durée.` : "";
     try {
-      const prompt = `Tu es assistant coach basket. Plan d'entraînement adapté.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""}\nJOUEUSES PRÉSENTES:\n${p||"Non renseigné"}${renfLine}${mCtx}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n${next?`PROCHAIN MATCH: vs ${next.adversaire} le ${next.date} (${nbEntr} entraînement${nbEntr>1?"s":""} disponible${nbEntr>1?"s":""})`:"Aucun match imminent — travail de fond possible"}\n${calEvent?`CET ENTRAÎNEMENT est le ${calEvent.date} ${calEvent.heure}`:""}\n\nFormat: Échauffement → Exercices techniques (durée + consignes) → Situation de jeu → Retour au calme. Très opérationnel, adapté au niveau.`;
+      const prompt = `Tu es assistant coach basket. Plan d'entraînement adapté.\n\nCONTEXTE: ${saison.equipe} | ${saison.division} | ${club.contexte||""}\nJOUEUSES PRÉSENTES:\n${p||"Non renseigné"}${renfLine}${mCtx}${exosCtx}\nFOCUS: ${focus||"Travail général équilibré"}\nDURÉE: ${duree} minutes\n${next?`PROCHAIN MATCH: vs ${next.adversaire} le ${next.date} (${nbEntr} entraînement${nbEntr>1?"s":""} disponible${nbEntr>1?"s":""})`:"Aucun match imminent — travail de fond possible"}\n${calEvent?`CET ENTRAÎNEMENT est le ${calEvent.date} ${calEvent.heure}`:""}\n\nFormat: Échauffement → Exercices techniques (durée + consignes) → Situation de jeu → Retour au calme. Très opérationnel, adapté au niveau.`;
       setOutput(await askClaude(null, [{role:"user",content:prompt}]));
     } catch(e) { setOutput(`Erreur: ${e.message}`); }
     setLoading(false);
@@ -1298,6 +1308,22 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, matches, init
             </div>
           </>}
         </div>}
+
+        {exercices.length>0 && <>
+          <button className="btn btn-ghost" style={{width:"100%",marginTop:8,fontSize:11}} onClick={()=>setShowExercices(s=>!s)}>
+            {showExercices?"▲":"▼"} 🎬 Exercices bibliothèque {selectedExercices.size>0?`(${selectedExercices.size} sélectionné${selectedExercices.size>1?"s":""})` : ""}
+          </button>
+          {showExercices && <div style={{marginTop:12}}>
+            {Object.entries(exosBycat).map(([cat, exos])=><div key={cat} style={{marginBottom:10}}>
+              <p style={{fontFamily:"Oswald",fontSize:9,letterSpacing:2,textTransform:"uppercase",color:"var(--muted)",marginBottom:6}}>{cat}</p>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {exos.map(e=><button key={e.id} className={`btn ${selectedExercices.has(e.id)?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"5px 10px",justifyContent:"flex-start"}} onClick={()=>toggleE(e.id)}>
+                  {e.nom}
+                </button>)}
+              </div>
+            </div>)}
+          </div>}
+        </>}
 
         <button className="btn btn-accent" style={{width:"100%",marginTop:14}} onClick={generate} disabled={loading}>{loading?"⏳...":"⚡ Générer l'entraînement"}</button>
       </div>
