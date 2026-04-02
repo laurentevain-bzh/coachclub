@@ -782,7 +782,7 @@ Reponds avec ce JSON : {"mon_attaque":"...","ma_defense":"...","attaque_adverse"
     setSaving(false);
   };
 
-  const wins = matches.filter(m=>parseInt(m.score_nous)>parseInt(m.score_eux)).length;
+  const wins = matches.filter(m=>parseInt(m.score_nous||0)>parseInt(m.score_eux||0)).length;
   const totalPts = matches.reduce((a,m)=>a+parseInt(m.score_nous||0),0);
   const avgPts = matches.length ? Math.round(totalPts/matches.length) : 0;
 
@@ -799,23 +799,25 @@ Reponds avec ce JSON : {"mon_attaque":"...","ma_defense":"...","attaque_adverse"
     </div>}
     {matches.length===0 && <div className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:48,marginBottom:12}}>📋</div><p className="muted">Aucun match cette saison.</p></div>}
     {matches.map(m=>{
-      const w=parseInt(m.score_nous)>parseInt(m.score_eux);
-      const statsJ = typeof m.stats_joueuses === "string" ? JSON.parse(m.stats_joueuses||"[]") : (m.stats_joueuses||[]);
-      const hasStats = statsJ.length > 0;
-      return <div key={m.id} className="mitem">
-        <span className="mdate" style={{cursor:"pointer"}} onClick={()=>openDetail(m)}>{m.date||"–"}</span>
-        <div style={{flex:1,cursor:"pointer"}} onClick={()=>openDetail(m)}>
-          <div className="mvs">vs {m.adversaire}</div>
-          <div className="flex gap2" style={{marginTop:4,flexWrap:"wrap"}}>
-            {m.defense_adverse && <span className="badge b-yellow">{m.defense_adverse}</span>}
-            {hasStats && <span className="badge b-blue">📊 Stats</span>}
-            {m.pdf_tirs_url && <span className="badge b-green">🎯 PDF</span>}
+      try {
+        const w=parseInt(m.score_nous||0)>parseInt(m.score_eux||0);
+        let hasStats = false;
+        try { const sj = typeof m.stats_joueuses==="string" ? JSON.parse(m.stats_joueuses||"[]") : (m.stats_joueuses||[]); hasStats = sj.length>0; } catch {}
+        return <div key={m.id} className="mitem">
+          <span className="mdate" style={{cursor:"pointer"}} onClick={()=>openDetail(m)}>{m.date||"–"}</span>
+          <div style={{flex:1,cursor:"pointer"}} onClick={()=>openDetail(m)}>
+            <div className="mvs">vs {m.adversaire||"?"}</div>
+            <div className="flex gap2" style={{marginTop:4,flexWrap:"wrap"}}>
+              {m.defense_adverse && <span className="badge b-yellow">{m.defense_adverse}</span>}
+              {hasStats && <span className="badge b-blue">📊 Stats</span>}
+              {m.pdf_tirs_url && <span className="badge b-green">🎯 PDF</span>}
+            </div>
           </div>
-        </div>
-        <div className={`mscore ${w?"w":"l"}`}>{m.score_nous}–{m.score_eux}</div>
-        <span className={`badge ${w?"b-green":"b-red"}`}>{w?"V":"D"}</span>
-        <button className="btn btn-ghost" style={{fontSize:10,padding:"3px 8px",marginLeft:4}} onClick={()=>openEdit(m)}>✏️</button>
-      </div>;
+          <div className={`mscore ${w?"w":"l"}`}>{m.score_nous||0}–{m.score_eux||0}</div>
+          <span className={`badge ${w?"b-green":"b-red"}`}>{w?"V":"D"}</span>
+          <button className="btn btn-ghost" style={{fontSize:10,padding:"3px 8px",marginLeft:4}} onClick={e=>{e.stopPropagation();openEdit(m);}}>✏️</button>
+        </div>;
+      } catch(err) { return <div key={m.id} className="mitem"><span className="muted">Erreur: {m.adversaire}</span></div>; }
     })}
 
     {/* DETAIL MODAL */}
