@@ -53,5 +53,18 @@ export default async function handler(req, res) {
     } catch (error) { return res.status(500).json({ error: error.message }); }
   }
 
+  // ─── YOUTUBE SEARCH ───
+  if (service === "youtube") {
+    const { query } = req.body;
+    if (!query) return res.status(400).json({ error: "Missing query" });
+    try {
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=12&q=${encodeURIComponent(query)}&key=${process.env.YOUTUBE_API_KEY}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      if (!response.ok) return res.status(response.status).json({ error: data.error?.message || "YouTube error" });
+      return res.status(200).json(data);
+    } catch (error) { return res.status(500).json({ error: error.message }); }
+  }
+
   return res.status(400).json({ error: "Unknown service" });
 }
