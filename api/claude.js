@@ -58,7 +58,7 @@ export default async function handler(req, res) {
     const { query } = req.body;
     if (!query) return res.status(400).json({ error: "Missing query" });
     try {
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=12&q=${encodeURIComponent(query)}&key=${process.env.YOUTUBE_API_KEY}`;
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=50&q=${encodeURIComponent(query)}&key=${process.env.YOUTUBE_API_KEY}`;
       const response = await fetch(url);
       const data = await response.json();
       if (!response.ok) return res.status(response.status).json({ error: data.error?.message || "YouTube error" });
