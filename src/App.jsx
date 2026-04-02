@@ -77,7 +77,11 @@ const db = {
   getStatsSaison: sid => sb(`stats_match_joueuse?saison_id=eq.${sid}&order=created_at.asc`),
   getStatsJoueuse: (jid, sid) => sb(`stats_match_joueuse?joueuse_id=eq.${jid}&saison_id=eq.${sid}&order=created_at.asc`),
   createStatMatch: s => sb(`stats_match_joueuse`, { method: "POST", body: s, prefer: "return=minimal" }),
-  deleteStatsMatch: mid => sb(`stats_match_joueuse?match_id=eq.${mid}`, { method: "DELETE", prefer: "return=minimal" }),
+  // EXERCICES
+  getExercices: cid => sb(`exercices?club_id=eq.${cid}&order=categorie.asc,nom.asc`),
+  createExercice: e => sb(`exercices`, { method: "POST", body: e }),
+  updateExercice: (id, d) => sb(`exercices?id=eq.${id}`, { method: "PATCH", body: d }),
+  deleteExercice: id => sb(`exercices?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
 };
 
 /* ─── SUPABASE STORAGE ─── */
@@ -203,6 +207,12 @@ body{background:var(--bg);color:var(--white);font-family:'DM Sans',sans-serif;mi
 .tab{font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;padding:8px 16px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;transition:all .15s;}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent);}
 .sparring-wrap{display:flex;flex-direction:column;flex:1;background:var(--bg);border:1px solid var(--sparring);border-radius:2px;overflow:hidden;}
+.exo-card{background:var(--surface2);border:1px solid var(--border);border-radius:2px;padding:14px;transition:border-color .15s;}
+.exo-card:hover{border-color:var(--accent);}
+.exo-cat{font-family:'Oswald',sans-serif;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;}
+.exo-nom{font-size:15px;font-weight:600;margin-bottom:6px;}
+.exo-desc{font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px;}
+.exo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;}
 .sparring-header{background:var(--sparring-dim);border-bottom:1px solid var(--sparring);padding:14px 20px;display:flex;align-items:center;gap:12px;}
 .sparring-avatar{width:36px;height:36px;border-radius:50%;background:var(--sparring);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
 .sparring-name{font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;letter-spacing:1.5px;text-transform:uppercase;color:var(--sparring);}
@@ -1305,6 +1315,126 @@ function TrainingPage({ club, saison, joueuses, evals, calendrier, matches, init
   </div>;
 }
 
+/* ─── EXERCICES ─── */
+const CATEGORIES = ["Attaque","Défense","Tir","Passes","Dribble","Physique","Collectif","Échauffement","Retour au calme"];
+const NIVEAUX = ["Tous niveaux","Débutant","Intermédiaire","Avancé"];
+
+function ExercicesPage({ club }) {
+  const [exercices, setExercices] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [filterCat, setFilterCat] = useState("Tous");
+  const [saving, setSaving] = useState(false);
+  const emptyForm = () => ({ nom:"", categorie:"Attaque", description:"", youtube_url:"", niveau:"Tous niveaux", tags:"" });
+  const [form, setForm] = useState(emptyForm());
+
+  useEffect(()=>{ load(); },[club.id]);
+  const load = async () => setExercices((await db.getExercices(club.id))||[]);
+
+  const openNew = () => { setEditId(null); setForm(emptyForm()); setShowModal(true); };
+  const openEdit = e => { setEditId(e.id); setForm({...e}); setShowModal(true); };
+
+  const save = async () => {
+    if (!form.nom.trim() || !form.youtube_url.trim() || !form.categorie) return;
+    setSaving(true);
+    try {
+      if (editId) { await db.updateExercice(editId, form); }
+      else { await db.createExercice({ id:uid(), club_id:club.id, ...form }); }
+      await load(); setShowModal(false);
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const del = async id => { if (!confirm("Supprimer cet exercice ?")) return; await db.deleteExercice(id); await load(); };
+
+  const getYoutubeId = url => {
+    try {
+      const u = new URL(url);
+      return u.searchParams.get("v") || u.pathname.split("/").pop();
+    } catch { return null; }
+  };
+
+  const cats = ["Tous", ...CATEGORIES];
+  const filtered = filterCat==="Tous" ? exercices : exercices.filter(e=>e.categorie===filterCat);
+  const grouped = filtered.reduce((acc,e)=>{ if(!acc[e.categorie]) acc[e.categorie]=[]; acc[e.categorie].push(e); return acc; }, {});
+
+  return <div>
+    <div className="flex jc-sb items-c" style={{marginBottom:20}}>
+      <h2 className="page-title" style={{margin:0}}>Bibliothèque <span>({exercices.length})</span></h2>
+      <button className="btn btn-accent" onClick={openNew}>+ Exercice</button>
+    </div>
+
+    {/* Filtres catégorie */}
+    <div className="flex gap2" style={{flexWrap:"wrap",marginBottom:20}}>
+      {cats.map(c=><button key={c} className={`btn ${filterCat===c?"btn-accent":"btn-ghost"}`} style={{fontSize:11,padding:"5px 12px"}} onClick={()=>setFilterCat(c)}>{c}</button>)}
+    </div>
+
+    {exercices.length===0 && <div className="card" style={{textAlign:"center",padding:40}}>
+      <div style={{fontSize:48,marginBottom:12}}>🎬</div>
+      <p className="muted">Aucun exercice encore. Commence à construire ta bibliothèque !</p>
+    </div>}
+
+    {Object.entries(grouped).map(([cat, exos])=>(
+      <div key={cat} style={{marginBottom:24}}>
+        {filterCat==="Tous" && <p style={{fontFamily:"Oswald",fontSize:11,letterSpacing:2,textTransform:"uppercase",color:"var(--muted)",marginBottom:10}}>{cat}</p>}
+        <div className="exo-grid">
+          {exos.map(e=>{
+            const ytId = getYoutubeId(e.youtube_url);
+            return <div key={e.id} className="exo-card">
+              {/* Thumbnail YouTube */}
+              {ytId && <a href={e.youtube_url} target="_blank" rel="noopener noreferrer" style={{display:"block",marginBottom:10,position:"relative",borderRadius:2,overflow:"hidden"}}>
+                <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt={e.nom} style={{width:"100%",height:140,objectFit:"cover",display:"block"}}/>
+                <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#00000055"}}>
+                  <span style={{fontSize:40,color:"white",textShadow:"0 2px 8px #000"}}>▶</span>
+                </div>
+              </a>}
+              <div className="exo-cat">{e.categorie} {e.niveau&&e.niveau!=="Tous niveaux"?`· ${e.niveau}`:""}</div>
+              <div className="exo-nom">{e.nom}</div>
+              {e.description && <div className="exo-desc">{e.description}</div>}
+              {e.tags && <div style={{marginBottom:8,display:"flex",flexWrap:"wrap",gap:4}}>{e.tags.split(",").map(t=>t.trim()).filter(Boolean).map(t=><span key={t} className="badge b-yellow">{t}</span>)}</div>}
+              <div className="flex gap2 mt2">
+                <a href={e.youtube_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{flex:1,justifyContent:"center",textDecoration:"none",fontSize:11}}>🎬 Voir la vidéo</a>
+                <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 10px"}} onClick={()=>openEdit(e)}>✏️</button>
+                <button className="btn btn-danger" style={{padding:"5px 10px"}} onClick={()=>del(e.id)}>✕</button>
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>
+    ))}
+
+    {showModal && <div className="overlay" onClick={()=>setShowModal(false)}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-hdr">
+          <span className="modal-ttl">{editId?"Modifier":"Nouvel exercice"}</span>
+          <button className="close" onClick={()=>setShowModal(false)}>✕</button>
+        </div>
+        <div className="field"><label>Nom *</label><input value={form.nom} onChange={e=>setForm(f=>({...f,nom:e.target.value}))} placeholder="Ex: Exercice de passes en triangle"/></div>
+        <div className="grid2">
+          <div className="field"><label>Catégorie *</label>
+            <select value={form.categorie} onChange={e=>setForm(f=>({...f,categorie:e.target.value}))}>
+              {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>Niveau</label>
+            <select value={form.niveau} onChange={e=>setForm(f=>({...f,niveau:e.target.value}))}>
+              {NIVEAUX.map(n=><option key={n}>{n}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="field"><label>Lien YouTube *</label><input value={form.youtube_url} onChange={e=>setForm(f=>({...f,youtube_url:e.target.value}))} placeholder="https://www.youtube.com/watch?v=..."/></div>
+        {form.youtube_url && getYoutubeId(form.youtube_url) && <img src={`https://img.youtube.com/vi/${getYoutubeId(form.youtube_url)}/mqdefault.jpg`} alt="preview" style={{width:"100%",height:140,objectFit:"cover",borderRadius:2,marginBottom:12}}/>}
+        <div className="field"><label>Description</label><textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Consignes, variantes, points d'attention..."/></div>
+        <div className="field"><label>Tags (séparés par virgule)</label><input value={form.tags} onChange={e=>setForm(f=>({...f,tags:e.target.value}))} placeholder="zone, transition, PNR..."/></div>
+        <div className="flex gap2 jc-end mt3">
+          <button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Annuler</button>
+          <button className="btn btn-accent" onClick={save} disabled={saving||!form.nom||!form.youtube_url}>{saving?"...":"Enregistrer"}</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
 /* ─── SPARRING ─── */
 function SparringPage({ club, saison, joueuses, evals, matches, chatHistory, reloadChat, coachName, allMatches }) {
   const [input, setInput] = useState("");
@@ -1438,6 +1568,7 @@ export default function App() {
   const NAV = [
     { group:"IA", items:[{id:"sparring",icon:"🧠",label:"Sparring Partner"},{id:"gameplan",icon:"🎯",label:"Plan de match"},{id:"training",icon:"⚡",label:"Entraînement"}]},
     { group:"Saison", items:[{id:"calendrier",icon:"📅",label:"Calendrier"},{id:"joueuses",icon:"👥",label:"Effectif"},{id:"matchs",icon:"📋",label:"Matchs"}]},
+    { group:"Ressources", items:[{id:"exercices",icon:"🎬",label:"Bibliothèque"}]},
   ];
   const FLAT_NAV = NAV.flatMap(g=>g.items);
 
@@ -1469,7 +1600,7 @@ export default function App() {
           {page==="training" && <TrainingPage club={club} saison={saison} joueuses={joueuses} evals={evals} calendrier={calendrier} matches={matches} initContext={navCtx}/>}
           {page==="calendrier" && <CalendrierPage club={club} saison={saison} calendrier={calendrier} matches={matches} reload={reloadCal} onNavigate={navigate}/>}
           {page==="joueuses" && <JoueusesPage club={club} saison={saison} joueuses={joueuses} evals={evals} reload={reloadJ} statsSaison={statsSaison} matches={matches}/>}
-          {page==="matchs" && <MatchsPage club={club} saison={saison} joueuses={joueuses} matches={matches} reload={reloadM}/>}
+          {page==="exercices" && <ExercicesPage club={club}/>}
         </main>
       </div>
       <nav className="bottom-nav"><div className="bottom-nav-inner">
