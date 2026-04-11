@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import TacticalBoard from "./TacticalBoard";
+import ReactMarkdown from "react-markdown";
 
 /* ─── AI ─── */
 const askClaude = async (system, messages, maxTokens = 1500) => {
@@ -234,6 +235,12 @@ body{background:var(--bg);color:var(--white);font-family:'DM Sans',sans-serif;mi
 .msg.user{align-self:flex-end;flex-direction:row-reverse;}
 .msg-bubble{padding:12px 16px;border-radius:2px;font-size:14px;line-height:1.6;}
 .msg.bot .msg-bubble{background:var(--sparring-dim);border:1px solid var(--sparring);font-family:'Lora',serif;color:var(--white);}
+.msg.bot .msg-bubble p{margin:0 0 8px;}.msg.bot .msg-bubble p:last-child{margin-bottom:0;}
+.msg.bot .msg-bubble ul,.msg.bot .msg-bubble ol{margin:4px 0 8px;padding-left:20px;}
+.msg.bot .msg-bubble li{margin-bottom:2px;}
+.msg.bot .msg-bubble strong{color:var(--accent);font-weight:700;}
+.msg.bot .msg-bubble h1,.msg.bot .msg-bubble h2,.msg.bot .msg-bubble h3{font-family:'Oswald',sans-serif;letter-spacing:1px;text-transform:uppercase;color:var(--sparring);margin:12px 0 6px;}
+.msg.bot .msg-bubble code{background:#ffffff15;padding:1px 5px;border-radius:2px;font-size:12px;}
 .msg.user .msg-bubble{background:var(--surface2);border:1px solid var(--border);color:var(--white);}
 .msg-avatar{width:28px;height:28px;border-radius:50%;flex-shrink:0;margin-top:4px;display:flex;align-items:center;justify-content:center;font-size:13px;}
 .msg.bot .msg-avatar{background:var(--sparring-dim);border:1px solid var(--sparring);color:var(--sparring);}
@@ -1601,7 +1608,11 @@ ${prev?`HISTORIQUE SAISONS PRÉCÉDENTES:\n${prev}`:""}`;
         {chatHistory.map((h,i)=><div key={i} className={`msg ${h.role==="user"?"user":"bot"}`}>
           <div className="msg-avatar">{h.role==="user"?"👤":"🧠"}</div>
           <div>
-            <div className="msg-bubble">{h.content}</div>
+            <div className="msg-bubble">
+              {h.role==="assistant"
+                ? <ReactMarkdown>{h.content}</ReactMarkdown>
+                : h.content}
+            </div>
             {h.role==="assistant" && onOpenTactic && (
               <button
                 style={{marginTop:6,fontSize:11,padding:"4px 10px",background:"#a78bfa18",border:"1px solid #a78bfa",color:"#a78bfa",borderRadius:2,cursor:"pointer",fontFamily:"Oswald",letterSpacing:1,textTransform:"uppercase",display:"block"}}
