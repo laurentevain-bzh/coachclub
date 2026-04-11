@@ -1589,14 +1589,14 @@ ${prev?`HISTORIQUE SAISONS PRÉCÉDENTES:\n${prev}`:""}`;
     <div className="sparring-wrap">
       <div className="sparring-header">
         <div className="sparring-avatar">🧠</div>
-        <div><div className="sparring-name">Cortex</div><div className="sparring-desc">Je challenge, je questionne — pour que tu coaches mieux.</div></div>
+        <div><div className="sparring-name">Pop</div><div className="sparring-desc">Je challenge, je questionne — pour que tu coaches mieux.</div></div>
         <div className="sparring-status"><span className="dot"/><span>Actif</span></div>
         {chatHistory.length>0 && <button className="btn btn-ghost" style={{marginLeft:8,fontSize:10,padding:"4px 10px"}} onClick={async()=>{await db.clearChat(saison.id);await reloadChat();}}>Effacer</button>}
       </div>
       <div className="chat-messages">
         {chatHistory.length===0 && <div style={{textAlign:"center",padding:"20px 0"}}>
           <p style={{fontFamily:"'Lora',serif",fontStyle:"italic",color:"var(--muted)",fontSize:14,marginBottom:6}}>"Le meilleur coach n'est pas celui qui a toutes les réponses,<br/>mais celui qui pose les bonnes questions."</p>
-          <p style={{fontSize:12,color:"var(--border)"}}>— Cortex</p>
+          <p style={{fontSize:12,color:"var(--border)"}}>— Pop</p>
         </div>}
         {chatHistory.map((h,i)=><div key={i} className={`msg ${h.role==="user"?"user":"bot"}`}>
           <div className="msg-avatar">{h.role==="user"?"👤":"🧠"}</div>
@@ -1747,7 +1747,7 @@ export default function App() {
       <nav className="bottom-nav"><div className="bottom-nav-inner">
         {FLAT_NAV.map(item=><button key={item.id} className={`bnav-item ${page===item.id?"active":""}`} onClick={()=>navigate(item.id)}>
           <span className="bnav-icon">{item.icon}</span>
-          <span className="bnav-label">{item.label==="Sparring Partner"?"Cortex":item.label==="Plan de match"?"Match":item.label==="Entraînement"?"Training":item.label}</span>
+          <span className="bnav-label">{item.label==="Sparring Partner"?"Pop":item.label==="Plan de match"?"Match":item.label==="Entraînement"?"Training":item.label}</span>
         </button>)}
         <button className="bnav-item" onClick={logout}><span className="bnav-icon">⏏</span><span className="bnav-label">Quitter</span></button>
       </div></nav>
