@@ -90,7 +90,7 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
   const [animStep, setAnimStep] = useState(-1);
   const stateRef = useRef({ players, ball, arrows, mode, dragging, arrowStart });
 
-  useEffect(() => { stateRef.current = { players, ball, arrows, mode, dragging, arrowStart }; });
+  useEffect(() => { stateRef.current = { players, ball, arrows, mode, dragging, arrowStart, animStep }; });
 
   // Taille canvas responsive
   const [canvasSize, setCanvasSize] = useState({ w: 480, h: 400 });
