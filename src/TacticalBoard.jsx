@@ -239,6 +239,29 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
       ctx.fillText(r, 4, y + 4);
     });
 
+    // ─── POSITIONS ANIMÉES ───
+    // Calcule où sont les joueurs/ballon après chaque flèche jouée
+    let displayPlayers = players;
+    let displayBall = ball;
+    if (animStep >= 0) {
+      const moved = players.map(p => ({ ...p }));
+      let movedBall = ball;
+      arrows.slice(0, animStep + 1).forEach(arr => {
+        if (arr.from === "ball") {
+          const target = moved.find(p => p.label === arr.to);
+          movedBall = target ? target.pos : arr.to;
+        } else {
+          const idx = moved.findIndex(p => p.label === arr.from);
+          if (idx >= 0) {
+            const target = moved.find(p => p.label === arr.to);
+            moved[idx] = { ...moved[idx], pos: target ? target.pos : arr.to };
+          }
+        }
+      });
+      displayPlayers = moved;
+      displayBall = movedBall;
+    }
+
     // ─── FLÈCHES ───
     const visibleArrows = animStep >= 0 ? arrows.slice(0, animStep + 1) : arrows;
     visibleArrows.forEach((arr, i) => {
@@ -283,7 +306,7 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     ctx.textBaseline = "alphabetic";
 
     // ─── JOUEURS ───
-    players.forEach(p => {
+    displayPlayers.forEach(p => {
       const { x, y } = gridToXY(p.pos);
       const px = x * w, py = y * h;
       const r = Math.round(Math.min(w, h) * 0.042);
@@ -304,7 +327,7 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     ctx.textBaseline = "alphabetic";
 
     // ─── BALLON ───
-    const ballPos = ball;
+    const ballPos = displayBall;
     if (ballPos) {
       const { x, y } = gridToXY(ballPos);
       const bx = x * w, by = y * h;
