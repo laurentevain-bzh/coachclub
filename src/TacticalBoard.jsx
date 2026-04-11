@@ -240,12 +240,11 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     });
 
     // ─── FLÈCHES ───
-    const { arrows: arrs, animStep: step } = stateRef.current;
-    const visibleArrows = step >= 0 ? arrs.slice(0, step + 1) : arrs;
+    const visibleArrows = animStep >= 0 ? arrows.slice(0, animStep + 1) : arrows;
     visibleArrows.forEach((arr, i) => {
-      const fromPos = stateRef.current.players.find(p => p.label === arr.from)?.pos || arr.from;
-      const toPos = stateRef.current.players.find(p => p.label === arr.to)?.pos || arr.to;
-      const from = gridToXY(fromPos === "ball" ? stateRef.current.ball : fromPos);
+      const fromPos = players.find(p => p.label === arr.from)?.pos || arr.from;
+      const toPos = players.find(p => p.label === arr.to)?.pos || arr.to;
+      const from = gridToXY(fromPos === "ball" ? ball : fromPos);
       const to = gridToXY(toPos);
       const fx = from.x * w, fy = from.y * h;
       const tx = to.x * w, ty = to.y * h;
@@ -284,7 +283,7 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     ctx.textBaseline = "alphabetic";
 
     // ─── JOUEURS ───
-    stateRef.current.players.forEach(p => {
+    players.forEach(p => {
       const { x, y } = gridToXY(p.pos);
       const px = x * w, py = y * h;
       const r = Math.round(Math.min(w, h) * 0.042);
@@ -305,7 +304,7 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     ctx.textBaseline = "alphabetic";
 
     // ─── BALLON ───
-    const ballPos = stateRef.current.ball;
+    const ballPos = ball;
     if (ballPos) {
       const { x, y } = gridToXY(ballPos);
       const bx = x * w, by = y * h;
