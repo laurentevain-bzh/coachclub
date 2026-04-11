@@ -263,7 +263,7 @@ Positions de référence :
 
 ## Features à faire (backlog)
 
-- [ ] Renommer Cortex → Pop dans l'UI
+- [x] Renommer Cortex → Pop dans l'UI
 - [ ] Refactoring App.jsx en composants séparés (>1700 lignes)
 - [ ] Suivi progression individuelle joueuse (courbe visuelle sur la saison)
 - [ ] Bilan de fin de saison généré par Pop
