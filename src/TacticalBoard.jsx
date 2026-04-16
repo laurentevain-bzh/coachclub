@@ -164,43 +164,43 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     // Bordure terrain
     ctx.strokeRect(4, 4, w - 8, h - 8);
 
-    // Ligne médiane (bas du demi-terrain)
-    ctx.beginPath();
-    ctx.moveTo(4, h - 4);
-    ctx.lineTo(w - 4, h - 4);
-    ctx.stroke();
+    // Raquette — part de la ligne de fond (y=4), descend jusqu'à la ligne de lancer franc
+    const raqLeft = toXY("C1").x;
+    const raqRight = toXY("F1").x;
+    const raqBottom = toXY("F3").y;
+    ctx.strokeRect(raqLeft, 4, raqRight - raqLeft, raqBottom - 4);
 
-    // Raquette (C1 à F3)
-    const raq1 = toXY("C1");
-    const raq2 = toXY("F1");
-    const raq3 = toXY("F3");
-    const raqW = raq2.x - raq1.x;
-    const raqH = raq3.y - raq1.y;
-    ctx.strokeRect(raq1.x, raq1.y, raqW, raqH);
-
-    // Cercle lancer franc
-    const lfCenter = toXY("D3");
+    // Cercle lancer franc (centré sur la ligne de lancer franc, largeur = raquette)
+    const lfCX = (toXY("D3").x + toXY("E3").x) / 2;
+    const lfCY = toXY("D3").y;
     const lfR = (toXY("F3").x - toXY("C3").x) / 2;
     ctx.beginPath();
-    ctx.arc(lfCenter.x + (toXY("E3").x - toXY("D3").x) / 2, lfCenter.y, lfR, 0, Math.PI * 2);
+    ctx.arc(lfCX, lfCY, lfR, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Ligne 3 points - grand arc centré sur milieu raquette, bombe vers le bas
+    // ─── LIGNE 3 POINTS ───
+    // Arc centré sur le panier, segments latéraux verticaux partant de la ligne de fond
     const basketX = (toXY("D1").x + toXY("E1").x) / 2;
     const basketY = toXY("D1").y;
-    const arc3R = w * 0.42;
-    ctx.beginPath();
-    ctx.arc(basketX, basketY - h * 0.05, arc3R, 0.15, Math.PI - 0.15);
-    ctx.stroke();
+    const arc3R = w * 0.443; // ~6.75m sur terrain 15m de large
+    const latOffX = w * 0.068; // ~0.9m depuis chaque ligne latérale (standard FIBA)
+    const latLeftX = 4 + latOffX;
+    const latRightX = w - 4 - latOffX;
+    // Calcul dynamique : y où l'arc rencontre les segments latéraux
+    const dxLat = latLeftX - basketX;
+    const dyLat = Math.sqrt(Math.max(0, arc3R * arc3R - dxLat * dxLat));
+    const latEndY = basketY + dyLat;
+    // Angles de l'arc aux points de jonction avec les segments
+    const arcAngR = Math.atan2(dyLat, latRightX - basketX);
+    const arcAngL = Math.PI - arcAngR; // symétrique
 
-    // Lignes latérales 3pts
+    // Segments latéraux verticaux : ligne de fond → jonction avec l'arc
+    ctx.beginPath(); ctx.moveTo(latLeftX, 4); ctx.lineTo(latLeftX, latEndY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(latRightX, 4); ctx.lineTo(latRightX, latEndY); ctx.stroke();
+
+    // Arc 3 points
     ctx.beginPath();
-    ctx.moveTo(4, toXY("A3").y);
-    ctx.lineTo(toXY("B3").x - 10, toXY("A3").y);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(w - 4, toXY("H3").y);
-    ctx.lineTo(toXY("G3").x + 10, toXY("H3").y);
+    ctx.arc(basketX, basketY, arc3R, arcAngR, arcAngL);
     ctx.stroke();
 
     // Panier
@@ -263,12 +263,34 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     }
 
     // ─── FLÈCHES ───
+    // Calcule l'historique des positions pour que chaque flèche parte de la bonne position
+    const posHistory = [{ pls: players.map(p => ({ ...p })), bl: ball }];
+    arrows.forEach(arr => {
+      const prev = posHistory[posHistory.length - 1];
+      const np = prev.pls.map(p => ({ ...p }));
+      let nb = prev.bl;
+      if (arr.from === "ball") {
+        const t = np.find(p => p.label === arr.to);
+        nb = t ? t.pos : arr.to;
+      } else {
+        const idx = np.findIndex(p => p.label === arr.from);
+        if (idx >= 0) {
+          const t = np.find(p => p.label === arr.to);
+          np[idx] = { ...np[idx], pos: t ? t.pos : arr.to };
+        }
+      }
+      posHistory.push({ pls: np, bl: nb });
+    });
+
     const visibleArrows = animStep >= 0 ? arrows.slice(0, animStep + 1) : arrows;
     visibleArrows.forEach((arr, i) => {
-      const fromPos = players.find(p => p.label === arr.from)?.pos || arr.from;
-      const toPos = players.find(p => p.label === arr.to)?.pos || arr.to;
-      const from = gridToXY(fromPos === "ball" ? ball : fromPos);
-      const to = gridToXY(toPos);
+      const ctx_from = posHistory[i]; // positions AVANT que cette flèche soit appliquée
+      const fromPosStr = arr.from === "ball"
+        ? ctx_from.bl
+        : (ctx_from.pls.find(p => p.label === arr.from)?.pos || arr.from);
+      const toPosStr = ctx_from.pls.find(p => p.label === arr.to)?.pos || arr.to;
+      const from = gridToXY(fromPosStr);
+      const to = gridToXY(toPosStr);
       const fx = from.x * w, fy = from.y * h;
       const tx = to.x * w, ty = to.y * h;
       const color = arr.team === "def" ? "#ff6b6b" : "#4dff9a";
@@ -354,14 +376,17 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
   useEffect(() => { draw(); }, [draw, players, ball, arrows, animStep, canvasSize]);
 
   // ─── ANIMATION ───
-  const startAnimation = () => {
-    if (arrows.length === 0) return;
+  // Utilise stateRef pour éviter le problème de closure stale (ex: initData depuis Pop)
+  const startAnimation = useCallback(() => {
+    const arrowsNow = stateRef.current.arrows;
+    if (arrowsNow.length === 0) return;
     setAnimating(true);
     setAnimStep(-1);
     let step = 0;
+    const total = arrowsNow.length;
     const next = () => {
       setAnimStep(step);
-      if (step < arrows.length - 1) {
+      if (step < total - 1) {
         step++;
         animRef.current = setTimeout(next, 900);
       } else {
@@ -369,7 +394,7 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
       }
     };
     animRef.current = setTimeout(next, 300);
-  };
+  }, []);
   useEffect(() => () => clearTimeout(animRef.current), []);
 
   // ─── EVENTS CANVAS ───
