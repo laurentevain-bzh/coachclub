@@ -221,12 +221,12 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     ctx.stroke();
 
     // ─── GRILLE (debug léger) ───
-    ctx.strokeStyle = "#ffffff18";
+    ctx.strokeStyle = "#ffffff06";
     ctx.lineWidth = 0.5;
     COLS.forEach((c, i) => {
       const x = ((i + 0.5) / 8) * w;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-      ctx.fillStyle = "#ffffff33";
+      ctx.fillStyle = "#ffffff0D";
       ctx.font = `${Math.round(h * 0.025)}px monospace`;
       ctx.textAlign = "center";
       ctx.fillText(c, x, h - 4);
@@ -234,7 +234,7 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     ROWS.forEach((r, i) => {
       const y = ((i + 0.5) / 7) * h;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      ctx.fillStyle = "#ffffff33";
+      ctx.fillStyle = "#ffffff0D";
       ctx.textAlign = "left";
       ctx.fillText(r, 4, y + 4);
     });
