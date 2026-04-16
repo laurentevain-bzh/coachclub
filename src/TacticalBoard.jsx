@@ -1,53 +1,53 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 
-/* ─── GRILLE 8×7 ─── */
-// Colonnes A-H, Lignes 1-7
-const COLS = ["A","B","C","D","E","F","G","H"];
-const ROWS = [1,2,3,4,5,6,7];
+/* ─── GRILLE 16×14 ─── */
+// Colonnes A-P (16), Lignes 1-14 — double densité de la grille 8×7
+const COLS = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P"];
+const ROWS = [1,2,3,4,5,6,7,8,9,10,11,12,13,14];
 
-// Convertit "D4" → coordonnées canvas relatives (0-1)
+// Convertit "H8" → coordonnées canvas relatives (0-1)
 const gridToXY = (pos) => {
   if (!pos || pos.length < 2) return { x: 0.5, y: 0.5 };
   const col = COLS.indexOf(pos[0]);
-  const row = parseInt(pos[1]) - 1;
+  const row = parseInt(pos.slice(1)) - 1; // slice(1) pour gérer les rangs à 2 chiffres
   return {
-    x: (col + 0.5) / 8,
-    y: (row + 0.5) / 7,
+    x: (col + 0.5) / 16,
+    y: (row + 0.5) / 14,
   };
 };
 
-// Positions initiales des joueurs
+// Positions initiales des joueurs (équivalentes à l'ancienne grille 8×7)
 const DEFAULT_ATTACK = [
-  { label: "1", pos: "D4", team: "atk" },
-  { label: "2", pos: "G2", team: "atk" },
-  { label: "3", pos: "B2", team: "atk" },
-  { label: "4", pos: "B6", team: "atk" },
-  { label: "5", pos: "G6", team: "atk" },
+  { label: "1", pos: "H8",  team: "atk" }, // meneur
+  { label: "2", pos: "N4",  team: "atk" }, // ailier droit
+  { label: "3", pos: "D4",  team: "atk" }, // ailier gauche
+  { label: "4", pos: "D12", team: "atk" }, // poste bas gauche
+  { label: "5", pos: "N12", team: "atk" }, // poste bas droit
 ];
 const DEFAULT_DEFENSE = [
-  { label: "D1", pos: "D2", team: "def" },
-  { label: "D2", pos: "E2", team: "def" },
-  { label: "D3", pos: "C3", team: "def" },
-  { label: "D4", pos: "F3", team: "def" },
-  { label: "D5", pos: "D5", team: "def" },
+  { label: "D1", pos: "H4",  team: "def" },
+  { label: "D2", pos: "J4",  team: "def" },
+  { label: "D3", pos: "F6",  team: "def" },
+  { label: "D4", pos: "L6",  team: "def" },
+  { label: "D5", pos: "H10", team: "def" },
 ];
 
 const FORMATIONS = {
   "2-1-2": [
-    { label: "1", pos: "D4" }, { label: "2", pos: "G2" }, { label: "3", pos: "B2" },
-    { label: "4", pos: "B5" }, { label: "5", pos: "G5" },
+    { label: "1", pos: "H8"  }, { label: "2", pos: "N4"  }, { label: "3", pos: "D4"  },
+    { label: "4", pos: "D10" }, { label: "5", pos: "N10" },
   ],
   "2-2-1": [
-    { label: "1", pos: "C3" }, { label: "2", pos: "F3" }, { label: "3", pos: "B5" },
-    { label: "4", pos: "G5" }, { label: "5", pos: "D6" },
+    { label: "1", pos: "F6"  }, { label: "2", pos: "L6"  }, { label: "3", pos: "D10" },
+    { label: "4", pos: "N10" }, { label: "5", pos: "H12" },
   ],
   "1-3-1": [
-    { label: "1", pos: "D4" }, { label: "2", pos: "B3" }, { label: "3", pos: "D2" },
-    { label: "4", pos: "G3" }, { label: "5", pos: "D6" },
+    { label: "1", pos: "H8"  }, { label: "2", pos: "D6"  }, { label: "3", pos: "H4"  },
+    { label: "4", pos: "N6"  }, { label: "5", pos: "H12" },
   ],
   "Zone 2-3": [
-    { label: "D1", pos: "C2" }, { label: "D2", pos: "F2" }, { label: "D3", pos: "B4" },
-    { label: "D4", pos: "D4" }, { label: "D5", pos: "G4" },
+    { label: "D1", pos: "F4"  }, { label: "D2", pos: "L4"  }, { label: "D3", pos: "D8" },
+    { label: "D4", pos: "H8"  }, { label: "D5", pos: "N8"  },
   ],
 };
 
@@ -164,24 +164,25 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     // Bordure terrain
     ctx.strokeRect(4, 4, w - 8, h - 8);
 
-    // Raquette — part de la ligne de fond (y=4), descend jusqu'à la ligne de lancer franc
-    const raqLeft = toXY("C1").x;
-    const raqRight = toXY("F1").x;
-    const raqBottom = toXY("F3").y;
+    // Marquages terrain — proportions fixes, indépendantes de la grille joueurs
+    // Raquette : 31.25% à 68.75% de la largeur, de la ligne de fond à 35.7% de hauteur
+    const raqLeft   = w * 0.3125;
+    const raqRight  = w * 0.6875;
+    const raqBottom = h * 0.357;
     ctx.strokeRect(raqLeft, 4, raqRight - raqLeft, raqBottom - 4);
 
-    // Cercle lancer franc (centré sur la ligne de lancer franc, largeur = raquette)
-    const lfCX = (toXY("D3").x + toXY("E3").x) / 2;
-    const lfCY = toXY("D3").y;
-    const lfR = (toXY("F3").x - toXY("C3").x) / 2;
+    // Cercle lancer franc
+    const lfCX = w * 0.5;
+    const lfCY = raqBottom;
+    const lfR  = w * 0.1875;
     ctx.beginPath();
     ctx.arc(lfCX, lfCY, lfR, 0, Math.PI * 2);
     ctx.stroke();
 
     // ─── LIGNE 3 POINTS ───
-    // Arc centré sur le panier, segments latéraux verticaux partant de la ligne de fond
-    const basketX = (toXY("D1").x + toXY("E1").x) / 2;
-    const basketY = toXY("D1").y;
+    // Panier : centré, à ~7% du haut (indépendant de la grille)
+    const basketX = w * 0.5;
+    const basketY = h * 0.071;
     const arc3R = w * 0.443; // ~6.75m sur terrain 15m de large
     const latOffX = w * 0.068; // ~0.9m depuis chaque ligne latérale (standard FIBA)
     const latLeftX = 4 + latOffX;
@@ -220,19 +221,19 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
     ctx.lineTo(bkX + w * 0.05, bkY - h * 0.02);
     ctx.stroke();
 
-    // ─── GRILLE (debug léger) ───
+    // ─── GRILLE 16×14 (référence visuelle) ───
     ctx.strokeStyle = "#ffffff06";
     ctx.lineWidth = 0.5;
     COLS.forEach((c, i) => {
-      const x = ((i + 0.5) / 8) * w;
+      const x = ((i + 0.5) / 16) * w;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
       ctx.fillStyle = "#ffffff0D";
-      ctx.font = `${Math.round(h * 0.025)}px monospace`;
+      ctx.font = `${Math.round(h * 0.018)}px monospace`;
       ctx.textAlign = "center";
       ctx.fillText(c, x, h - 4);
     });
     ROWS.forEach((r, i) => {
-      const y = ((i + 0.5) / 7) * h;
+      const y = ((i + 0.5) / 14) * h;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
       ctx.fillStyle = "#ffffff0D";
       ctx.textAlign = "left";
@@ -419,8 +420,8 @@ export default function TacticalBoard({ initData, onClose, embedded = false }) {
   };
 
   const xyToGridPos = (rx, ry) => {
-    const col = Math.max(0, Math.min(7, Math.round(rx * 8 - 0.5)));
-    const row = Math.max(0, Math.min(6, Math.round(ry * 7 - 0.5)));
+    const col = Math.max(0, Math.min(15, Math.round(rx * 16 - 0.5)));
+    const row = Math.max(0, Math.min(13, Math.round(ry * 14 - 0.5)));
     return COLS[col] + (row + 1);
   };
 
