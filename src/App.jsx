@@ -1578,6 +1578,8 @@ function SparringPage({ club, saison, joueuses, evals, matches, chatHistory, rel
 
 RÈGLES: Ne valide jamais sans questionner. Identifie angles morts et biais. Adapte au niveau U15. Direct, inconfortable si nécessaire, constructif. Exploite l'historique inter-saisons.
 
+ÉDITEUR TACTIQUE: Chacune de tes réponses peut être visualisée sur un terrain interactif. Quand tu parles de placements, de schémas ou de déplacements, dis explicitement au coach qu'il peut cliquer sur "🏀 Ouvrir dans l'éditeur" sous ta réponse pour voir le schéma animé sur le terrain. C'est toi qui génères automatiquement ce schéma à partir du texte de ta réponse — tu n'as pas besoin de faire quoi que ce soit de spécial, le bouton s'en charge.
+
 CLUB: ${coachName} | ${club.name} | ${saison.equipe} ${saison.nom} | ${saison.division} | ${saison.seances_par_semaine} séances/sem
 CONTEXTE: ${club.contexte||"Non renseigné"}
 EFFECTIF:\n${p||"Non renseigné"}
